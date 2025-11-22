@@ -1,29 +1,27 @@
-// This file is our "plug" that connects to the real Ethio Telecom APIs.
-// For now, we will simulate their functions.
-
-// In a real build, we would use a tool like 'axios' to make real HTTP requests
-// const axios = require('axios');
-// const ETHIO_API_KEY = '...'; // Your secret key
+// This file simulates the real API calls to Ethio Telecom's network and services.
 
 const ethioTelecomService = {
 
+    // --- NEW: Simulates the SMS Gateway API ---
+    sendSMS: async (phoneNumber, message) => {
+        console.log(`SERVICE: Sending SMS to ${phoneNumber}: "${message}"`);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        return { success: true, messageId: `msg_${Math.random()}` };
+    },
+
     /**
-     * SIMULATES: The Payment Gateway API
+     * SIMULATES: The Payment Gateway API (B2C Subscription Charge)
      * Charges a customer's airtime for a subscription.
      */
     chargeSubscriber: async (phoneNumber, amount) => {
         console.log(`SERVICE: Attempting to charge ${amount} ETB to ${phoneNumber}...`);
-        // We simulate a 1-second network delay
         await new Promise(resolve => setTimeout(resolve, 1000)); 
         
-        // In a real app, this would be:
-        // await axios.post('https://api.ethio telecom.com/v1/payment/charge', {
-        //   apiKey: ETHIO_API_KEY,
-        //   phone: phoneNumber,
-        //   amount: amount
-        // });
+        if (amount > 50) { 
+            return { success: false, message: 'Payment failed: Insufficient balance.' };
+        }
         
-        console.log(`SERVICE: Successfully charged ${phoneNumber}.`);
+        console.log(`SERVICE: Successfully charged ${amount} ${phoneNumber}.`);
         return { success: true, transactionId: `txn_${Math.random()}` };
     },
 
@@ -35,8 +33,7 @@ const ethioTelecomService = {
         console.log(`SERVICE: Checking if "${businessName}" is a registered enterprise...`);
         await new Promise(resolve => setTimeout(resolve, 500));
         
-        // Simulate a real check
-        if (businessName === "Commercial Bank of Ethiopia" || businessName === "Zemen Bank") {
+        if (businessName.includes("Commercial Bank of Ethiopia") || businessName.includes("Ethiopian Airlines")) {
             return { isRegistered: true, businessId: `ethio-biz-${Math.random()}` };
         } else {
             return { isRegistered: false };
@@ -45,25 +42,11 @@ const ethioTelecomService = {
 
     /**
      * SIMULATES: The Outgoing Call Display API
-     * This is the "magic" API. We tell it to make a call with our verified data.
+     * This is the "magic" API that attaches the Verified badge to the call.
      */
     sendVerifiedCall: async (fromNumber, toNumber, businessName, callReason) => {
         console.log(`SERVICE: Sending verified call from ${fromNumber} to ${toNumber}...`);
-        console.log(`SERVICE: > Attaching Name: ${businessName}`);
-        console.log(`SERVICE: > Attaching Reason: ${callReason}`);
         await new Promise(resolve => setTimeout(resolve, 1500));
-
-        // In a real app, this would be a complex API call:
-        // await axios.post('https://api.ethio telecom.com/v1/voice/originate_verified', {
-        //   apiKey: ETHIO_API_KEY,
-        //   from: fromNumber,
-        //   to: toNumber,
-        //   rcd: {
-        //     name: businessName,
-        //     reason: callReason
-        //   }
-        // });
-
         console.log(`SERVICE: Call connected and ringing on customer's phone.`);
         return { success: true, callId: `call_${Math.random()}` };
     }

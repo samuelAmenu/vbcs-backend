@@ -1,8 +1,8 @@
 const mongoose = require('mongoose');
 
 // --- THIS IS WHERE YOUR SECRET KEY GOES ---
-const MONGO_DB_URL = "mongodb+srv://amenuil19_db_user:ehs04IyMn9Uz3S5P@vbcs-project.7far1jp.mongodb.net/?appName=VBCS-Project";
-
+// REPLACE WITH THIS:
+const MONGO_DB_URL = process.env.MONGO_DB_URL;
 
 const connectToDatabase = async () => {
   try {
