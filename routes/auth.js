@@ -1,92 +1,87 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
-const User = require('../models/User.js'); 
+const User = require('../models/User.js');
 const AuthTicket = require('../models/AuthTicket.js');
 const ethioTelecomService = require('../services/ethioTelecom.js'); 
 
-// --- Helper function to generate a 6-digit code ---
 const generateCode = () => Math.floor(100000 + Math.random() * 900000).toString();
 
-// --- API 1: Request Code (Initiates the Login/Registration) ---
+// --- API 1: Request Code ---
 router.post('/request-code', async (req, res) => {
     try {
         const { phoneNumber } = req.body;
-        if (!phoneNumber) {
-            return res.status(400).json({ success: false, message: 'Phone number is required.' });
-        }
+        if (!phoneNumber) return res.status(400).json({ success: false, message: 'Phone number required.' });
         
+        // Clean the number (remove spaces)
+        const cleanPhone = phoneNumber.trim();
         const code = generateCode();
         
-        await AuthTicket.deleteMany({ phoneNumber: phoneNumber });
-        await AuthTicket.create({ phoneNumber: phoneNumber, code: code });
-        await ethioTelecomService.sendSMS(phoneNumber, `Your VBCS login code is: ${code}. It expires in 5 minutes.`);
-
-        console.log(`(Route) Generated and SMS-sent code ${code} for ${phoneNumber}`);
+        // Delete old, create new
+        await AuthTicket.deleteMany({ phoneNumber: cleanPhone });
+        await AuthTicket.create({ phoneNumber: cleanPhone, code: code });
         
-        res.json({ success: true, message: 'Code sent successfully. Please check your SMS.', testCode: code });
+        console.log(`(DEBUG) Saved Ticket -> Phone: ${cleanPhone} | Code: ${code}`);
+
+        await ethioTelecomService.sendSMS(cleanPhone, `Code: ${code}`);
+        
+        res.json({ success: true, message: 'Code sent.', testCode: code });
     } catch (error) {
-        console.error('Request Code error:', error);
-        res.status(500).json({ success: false, message: 'Server error during code request.' });
+        console.error('Request error:', error);
+        res.status(500).json({ success: false });
     }
 });
 
-// --- API 2: Verify Code (Completes SMS Login/Registration) ---
+// --- API 2: Verify Code ---
 router.post('/verify-code', async (req, res) => {
     try {
         const { phoneNumber, code } = req.body;
+        const cleanPhone = phoneNumber.trim();
+        const cleanCode = code.trim();
+
+        console.log(`(DEBUG) Verifying -> Phone: ${cleanPhone} | Input Code: ${cleanCode}`);
+
+        // Find ticket
+        const ticket = await AuthTicket.findOne({ phoneNumber: cleanPhone, code: cleanCode });
         
-        const ticket = await AuthTicket.findOne({ phoneNumber: phoneNumber, code: code });
+        if (!ticket) {
+            // Debugging: Find what WAS there (if anything)
+            const existing = await AuthTicket.findOne({ phoneNumber: cleanPhone });
+            console.log(`(DEBUG) Failed. Found existing ticket for ${cleanPhone}:`, existing ? existing.code : 'NONE');
+            return res.status(401).json({ success: false, message: 'Invalid code. Please request a new one.' });
+        }
         
-        if (!ticket) { return res.status(401).json({ success: false, message: 'Invalid or expired code.' }); }
-        
+        // Success
         await AuthTicket.deleteOne({ _id: ticket._id });
 
-        let user = await User.findOne({ phoneNumber: phoneNumber });
+        let user = await User.findOne({ phoneNumber: cleanPhone });
         const isNewUser = !user;
 
         if (!user) {
-            // New user registration
             const defaultPassword = generateCode();
             const hashedPassword = await bcrypt.hash(defaultPassword, 10);
-            
-            user = await User.create({ phoneNumber: phoneNumber, password: hashedPassword, plan: 'free' });
-            console.log(`(Route) User registered: ${phoneNumber}`);
+            user = await User.create({ phoneNumber: cleanPhone, password: hashedPassword, plan: 'free' });
         }
         
-        res.json({ success: true, message: 'Login successful!', isNewUser: isNewUser, user: { id: user._id, phone: user.phoneNumber, plan: user.plan } });
+        res.json({ success: true, message: 'Login successful!', isNewUser: isNewUser, user: user });
 
     } catch (error) {
-        console.error('Verification error:', error);
-        res.status(500).json({ success: false, message: 'Server error during verification.' });
+        console.error('Verify error:', error);
+        res.status(500).json({ success: false });
     }
 });
 
-// --- NEW API 3: Standard Password Login ---
-// (POST /api/v1/auth/login-password)
+// --- API 3: Password Login ---
 router.post('/login-password', async (req, res) => {
     try {
         const { phoneNumber, password } = req.body;
-        // 1. Find the user in the database
         const user = await User.findOne({ phoneNumber: phoneNumber });
-        
-        if (!user) { return res.status(401).json({ success: false, message: 'Invalid phone number or password.' }); }
+        if (!user) return res.status(401).json({ success: false, message: 'Invalid login.' });
 
-        // 2. Securely compare the hashed password
         const isMatch = await bcrypt.compare(password, user.password);
-
-        if (isMatch) {
-            console.log(`(Route) Password login success for: ${phoneNumber}`);
-            // Return user object without the password
-            res.json({ success: true, message: 'Login successful!', isNewUser: false, user: user });
-        } else {
-            console.log(`(Route) Password login failed for: ${phoneNumber}`);
-            res.status(401).json({ success: false, message: 'Invalid phone number or password.' });
-        }
-    } catch (error) {
-        console.error('Password login error:', error);
-        res.status(500).json({ success: false, message: 'Server error during login.' });
-    }
+        if (isMatch) res.json({ success: true, user: user });
+        else res.status(401).json({ success: false, message: 'Invalid login.' });
+    } catch (error) { res.status(500).json({ success: false }); }
 });
 
 module.exports = router;
