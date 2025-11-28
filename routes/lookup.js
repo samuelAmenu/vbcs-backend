@@ -5,90 +5,91 @@ const router = express.Router();
 const SpamReport = require('../models/SpamReport.js');
 const CustomerReport = require('../models/CustomerReport.js');
 const Enterprise = require('../models/Enterprise.js');
+const DirectoryEntry = require('../models/DirectoryEntry.js'); // <-- NEW IMPORT
 
-// --- API for the "Caller ID Checker" ---
+// --- NEW API: Public Directory Search ---
+// (GET /api/v1/lookup/directory?search=...&category=...)
+router.get('/directory', async (req, res) => {
+    try {
+        const { search, category } = req.query;
+        let query = { status: 'Active' }; // Only show active entries
+
+        // Add Search Filter (Case-insensitive)
+        if (search) {
+            query.companyName = { $regex: search, $options: 'i' };
+        }
+        
+        // Add Category Filter
+        if (category && category !== 'All') {
+            query.category = category;
+        }
+
+        // Fetch results (Limit to 50 to keep app fast)
+        const results = await DirectoryEntry.find(query).limit(50).sort({ companyName: 1 });
+        
+        res.json(results);
+    } catch (error) {
+        console.error("Directory search error:", error);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// --- API for the "Caller ID Checker" (Existing) ---
 router.get('/call/:number', async (req, res) => {
     try {
         const { number } = req.params;
-        
-        // 1. Check MongoDB for Verified Enterprise
         const enterprise = await Enterprise.findOne({ registeredNumber: number });
-        if (enterprise) {
-            return res.json({ status: 'verified', name: enterprise.companyName });
-        }
+        if (enterprise) return res.json({ status: 'verified', name: enterprise.companyName });
         
-        // 2. Check MongoDB for a Spam report
+        // Also check the Directory for non-subscribed but known numbers
+        const directoryMatch = await DirectoryEntry.findOne({ phoneNumber: number });
+        if (directoryMatch) return res.json({ status: 'verified', name: directoryMatch.companyName });
+
         const report = await SpamReport.findOne({ phoneNumber: number });
-        if (report) {
-            return res.json({ status: 'warning', count: report.reportCount });
-        }
+        if (report) return res.json({ status: 'warning', count: report.reportCount });
         
         return res.json({ status: 'unverified' });
     } catch (error) { res.status(500).json({ status: 'error' }); }
 });
 
-// --- API for the "SMS Sender Check" ---
+// --- API for the "SMS Sender Check" (Existing) ---
 router.get('/sms/:number', async (req, res) => {
     try {
         const { number } = req.params;
-
-        // 1. Check MongoDB for a Spam report (highest priority)
         const report = await SpamReport.findOne({ phoneNumber: number });
-        if (report) {
-            return res.json({ status: 'danger', count: report.reportCount });
-        }
-
-        // 2. Check MongoDB for a Verified Enterprise
+        if (report) return res.json({ status: 'danger', count: report.reportCount });
+        
         const enterprise = await Enterprise.findOne({ registeredNumber: number });
-        if (enterprise) {
-            return res.json({ status: 'verified', name: enterprise.companyName });
-        }
+        if (enterprise) return res.json({ status: 'verified', name: enterprise.companyName });
+
+        const directoryMatch = await DirectoryEntry.findOne({ phoneNumber: number });
+        if (directoryMatch) return res.json({ status: 'verified', name: directoryMatch.companyName });
         
         return res.json({ status: 'info' });
     } catch (error) { res.status(500).json({ status: 'error' }); }
 });
 
-// --- API for submitting a report (THE FINAL FIX) ---
+// --- API for submitting a report (Existing) ---
 router.post('/reports', async (req, res) => {
     const { number, reason, comment } = req.body;
-    
     try {
         const enterprise = await Enterprise.findOne({ registeredNumber: number });
-
         if (enterprise) {
-            // SCENARIO B: Business-Specific Report
             await CustomerReport.create({
-                enterpriseId: enterprise.id, 
+                enterpriseId: enterprise._id, 
                 reportedNumber: number,
                 reason: reason,
                 comment: comment
             });
-            console.log(`(Route) Saved customer report for ${enterprise.companyName} to MongoDB.`);
         } else {
-            // SCENARIO A: System-Wide Spam Report (FINAL ROBUST LOGIC)
-            
-            const update = {
-                $inc: { reportCount: 1 }, // Increment the count by 1
-                $set: { category: reason, comment: comment } // Set the latest reason/comment
-            };
-            
             await SpamReport.findOneAndUpdate(
-                { phoneNumber: number }, // Find condition
-                update,
-                { 
-                    upsert: true, // CRITICAL: Creates the document if it doesn't exist
-                    new: true, // Returns the newly updated document
-                    setDefaultsOnInsert: true // Ensures defaults (like status) are set on creation
-                }
+                { phoneNumber: number },
+                { $inc: { reportCount: 1 }, $set: { category: reason, comment: comment } },
+                { upsert: true, new: true, setDefaultsOnInsert: true }
             );
-
-            console.log(`(Route) Handled spam report for ${number}. Report written to DB.`);
         }
         res.json({ success: true });
-    } catch (error) {
-        console.error("Error saving report:", error);
-        res.status(500).json({ success: false, message: "Error saving report" });
-    }
+    } catch (error) { res.status(500).json({ success: false }); }
 });
 
 module.exports = router;

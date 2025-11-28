@@ -1,39 +1,56 @@
 const mongoose = require('mongoose');
 
-// Define the official categories for searching
+// The official categories for your system
 const directoryCategories = [
     'Bank / Finance', 
-    'Government', 
-    'Logistics / Delivery', 
-    'NGO / Non-Profit', 
-    'Media / Telecom',
-    'Healthcare'
+    'Government Office', 
+    'Embassy / Consulate', 
+    'NGO / International Org', 
+    'Media / Broadcast',
+    'Healthcare / Emergency',
+    'Transport / Logistics',
+    'Education',
+    'Utility / Telecom'
 ];
 
-// This model stores all verified directory data, supporting search functionality
 const directoryEntrySchema = new mongoose.Schema({
     companyName: {
         type: String,
         required: true,
-        index: true // Indexing this field makes searching by name fast
+        trim: true,
+        index: true // Makes searching by name lightning fast
     },
     phoneNumber: {
         type: String,
         required: true,
-        unique: true, // Crucial: Each number must be unique
-        index: true // Indexing makes searching by number fast
+        unique: true, // No two organizations can own the same number
+        index: true
     },
     category: {
         type: String,
         required: true,
-        enum: directoryCategories // Must be one of the defined categories
+        enum: directoryCategories // Enforces valid categories
     },
     address: {
+        type: String,
+        default: 'Addis Ababa, Ethiopia'
+    },
+    website: {
         type: String
+    },
+    // In the future, we can store the URL of the logo image here
+    logoUrl: {
+        type: String,
+        default: 'default_logo.png' 
     },
     status: {
         type: String,
+        enum: ['Active', 'Suspended'],
         default: 'Active'
+    },
+    createdAt: {
+        type: Date,
+        default: Date.now
     }
 });
 
