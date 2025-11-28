@@ -13,17 +13,21 @@ router.post('/request-code', async (req, res) => {
         const { phoneNumber } = req.body;
         if (!phoneNumber) return res.status(400).json({ success: false, message: 'Phone number required.' });
         
-        // FIX: Clean the input (remove spaces) before saving
-        const cleanPhone = phoneNumber.trim(); 
-        const code = generateCode();
+        // 1. Clean Input
+        const cleanPhone = phoneNumber.trim();
         
-        // Cleanup old tickets
+        // 2. Manual Cleanup: Delete ANY existing tickets for this number (Old or New)
         await AuthTicket.deleteMany({ phoneNumber: cleanPhone });
         
-        // Save new ticket with CLEAN phone number
-        await AuthTicket.create({ phoneNumber: cleanPhone, code: code });
-        
-        // Logging for debugging on Render
+        // 3. Create New Ticket
+        const code = generateCode();
+        await AuthTicket.create({ 
+            phoneNumber: cleanPhone, 
+            code: code 
+            // No expiry logic here anymore
+        });
+
+        // 4. Log for Debugging
         console.log(`(DEBUG) Created Ticket -> Phone: "${cleanPhone}" | Code: "${code}"`);
 
         await ethioTelecomService.sendSMS(cleanPhone, `Code: ${code}`);
@@ -40,25 +44,24 @@ router.post('/verify-code', async (req, res) => {
     try {
         const { phoneNumber, code } = req.body;
         
-        // FIX: Clean the inputs exactly the same way
+        // 1. Clean Inputs
         const cleanPhone = phoneNumber.trim();
         const cleanCode = code.trim();
 
         console.log(`(DEBUG) Verifying -> Phone: "${cleanPhone}" | Input Code: "${cleanCode}"`);
 
-        // Find ticket
+        // 2. Find Ticket
         const ticket = await AuthTicket.findOne({ phoneNumber: cleanPhone, code: cleanCode });
         
         if (!ticket) {
-            // Debugging help in logs
-            const existing = await AuthTicket.findOne({ phoneNumber: cleanPhone });
-            console.log(`(DEBUG) Mismatch! Found existing ticket for ${cleanPhone}: ${existing ? existing.code : 'NONE'}`);
-            return res.status(401).json({ success: false, message: 'Invalid code. Please request a new one.' });
+            console.log(`(DEBUG) Verification Failed. No matching ticket found.`);
+            return res.status(401).json({ success: false, message: 'Invalid code.' });
         }
         
-        // Success - Delete ticket so it can't be reused
+        // 3. Success - Now we delete the ticket manually
         await AuthTicket.deleteOne({ _id: ticket._id });
 
+        // 4. Handle User Account
         let user = await User.findOne({ phoneNumber: cleanPhone });
         const isNewUser = !user;
 
@@ -80,9 +83,9 @@ router.post('/verify-code', async (req, res) => {
 router.post('/login-password', async (req, res) => {
     try {
         const { phoneNumber, password } = req.body;
-        const cleanPhone = phoneNumber.trim(); // Clean here too
-        
+        const cleanPhone = phoneNumber.trim();
         const user = await User.findOne({ phoneNumber: cleanPhone });
+        
         if (!user) return res.status(401).json({ success: false, message: 'Invalid login.' });
 
         const isMatch = await bcrypt.compare(password, user.password);
