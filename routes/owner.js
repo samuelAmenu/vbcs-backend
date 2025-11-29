@@ -56,11 +56,9 @@ router.post('/directory-upload', upload.single('file'), (req, res) => {
 
     const results = [];
     
-    // Process the CSV file stream
     fs.createReadStream(req.file.path)
         .pipe(csv())
         .on('data', (data) => {
-            // Check if the row has the minimum required data
             if(data.companyName && data.phoneNumber) {
                 results.push({
                     companyName: data.companyName,
@@ -74,18 +72,15 @@ router.post('/directory-upload', upload.single('file'), (req, res) => {
         .on('end', async () => {
             try {
                 if(results.length > 0) {
-                    // Bulk insert into MongoDB
                     await DirectoryEntry.insertMany(results);
                     console.log(`(Route) Successfully uploaded ${results.length} directory entries.`);
-                    res.json({ success: true, message: `Successfully added ${results.length} organizations to the Directory.` });
+                    res.json({ success: true, message: `Successfully added ${results.length} organizations.` });
                 } else {
                     res.json({ success: false, message: "CSV file was empty or had wrong headers." });
                 }
-                // Clean up: Delete the temp file
                 fs.unlinkSync(req.file.path);
             } catch (error) {
                 console.error('Upload error:', error);
-                // Ensure we delete the temp file even if there is an error
                 if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
                 res.status(500).json({ success: false, message: 'Error saving data. Check for duplicate numbers.' });
             }
@@ -95,42 +90,51 @@ router.post('/directory-upload', upload.single('file'), (req, res) => {
 // --- API 3: Get Directory List ---
 router.get('/directory', async (req, res) => {
     try {
-        const list = await DirectoryEntry.find({}).sort({ createdAt: -1 });
+        const list = await DirectoryEntry.find({}).sort({ createdAt: -1 }).limit(100);
         res.json(list);
     } catch (error) { res.status(500).json({ success: false }); }
 });
 
 // ==================================================
-//  ENTERPRISE MANAGEMENT
+//  ENTERPRISE MANAGEMENT (B2B)
 // ==================================================
 
-// --- API 4: Register New Enterprise (B2B Onboarding) ---
+// --- API 4: Register New Enterprise (UPDATED FOR REAL DATA) ---
 router.post('/register-enterprise', async (req, res) => {
     try {
-        const { companyName, tier, username, password, registeredNumber, tinNumber } = req.body;
+        const { 
+            companyName, 
+            tier, 
+            username, 
+            password, 
+            registeredNumber, 
+            tinNumber, // New Field
+            licenseFile // New Field (Optional string path for now)
+        } = req.body;
 
-        // 1. Verification: Check with Ethio Telecom Directory API
-        // In production, this ensures the TIN/License matches the Name.
+        // 1. Verification
         const check = await ethioTelecomService.isEnterpriseCustomer(companyName);
-        // Note: For testing purposes, we proceed even if check is false, 
-        // but in a real deployment, you would uncomment the next line:
         // if (!check.isRegistered) return res.status(400).json({ success: false, message: "Verification failed." });
         
-        // 2. Security: Hash the password
+        // 2. Security
         const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
-        // 3. Database: Create the Enterprise Record
+        // 3. Database Creation
         const newEnterprise = await Enterprise.create({
             companyName,
             tier,
             username,
             password: hashedPassword,
             registeredNumber,
+            tinNumber: tinNumber || null,     // Save TIN
+            licenseFile: licenseFile || null, // Save License
             monthlyBill: tier === 'Premium' ? 1500 : 800,
-            status: 'Pending Approval' // Requires Admin approval
+            status: 'Pending Approval',
+            vasStatus: 'Inactive', // Default state for Green Badge
+            crmId: null            // Will be filled by Admin later
         });
 
-        console.log(`(Route) Registered New Enterprise: ${companyName}`);
+        console.log(`(Route) Registered New B2B Enterprise: ${companyName} (TIN: ${tinNumber || 'N/A'})`);
         res.status(201).json({ success: true, message: 'Enterprise registered successfully.' });
 
     } catch (error) {
@@ -151,7 +155,7 @@ router.get('/enterprises', async (req, res) => {
 });
 
 // ==================================================
-//  DASHBOARD DATA & HEALTH
+//  DASHBOARD DATA
 // ==================================================
 
 // --- API 6: Main Dashboard Stats ---
@@ -162,9 +166,9 @@ router.get('/stats', async (req, res) => {
         const totalEnterprises = await Enterprise.countDocuments();
         const totalDirectory = await DirectoryEntry.countDocuments();
         
-        // Simulation for B2C until we have thousands of users
+        // Simulation for B2C
         const totalB2CSubscribers = 241500; 
-        const b2cRevenue = (totalB2CSubscribers * 60) / 50; // Approx conversion
+        const b2cRevenue = (totalB2CSubscribers * 60) / 50; 
         
         res.json({
             totalMonthlyRevenue: b2bRevenue + b2cRevenue,
@@ -175,7 +179,7 @@ router.get('/stats', async (req, res) => {
     } catch (error) { res.status(500).json({ success: false }); }
 });
 
-// --- API 7: System Health ---
+// --- Helper APIs ---
 router.get('/system-health', (req, res) => {
     res.json([
         { service: 'VBCS Backend Server', status: 'Operational' },
@@ -184,7 +188,6 @@ router.get('/system-health', (req, res) => {
     ]);
 });
 
-// --- API 8: Fraud Reports ---
 router.get('/fraud-reports', async (req, res) => {
     try {
         const reports = await SpamReport.find({});
