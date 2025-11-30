@@ -5,28 +5,27 @@ const router = express.Router();
 const SpamReport = require('../models/SpamReport.js');
 const CustomerReport = require('../models/CustomerReport.js');
 const Enterprise = require('../models/Enterprise.js');
-const DirectoryEntry = require('../models/DirectoryEntry.js'); // <-- NEW IMPORT
+const DirectoryEntry = require('../models/DirectoryEntry.js'); // <-- NEW: Added this
 
 // --- NEW API: Public Directory Search ---
-// (GET /api/v1/lookup/directory?search=...&category=...)
+// (GET /api/v1/lookup/directory)
 router.get('/directory', async (req, res) => {
     try {
         const { search, category } = req.query;
-        let query = { status: 'Active' }; // Only show active entries
+        let query = { status: 'Active' }; 
 
-        // Add Search Filter (Case-insensitive)
+        // Search Filter
         if (search) {
             query.companyName = { $regex: search, $options: 'i' };
         }
         
-        // Add Category Filter
+        // Category Filter
         if (category && category !== 'All') {
             query.category = category;
         }
 
-        // Fetch results (Limit to 50 to keep app fast)
+        // Fetch results
         const results = await DirectoryEntry.find(query).limit(50).sort({ companyName: 1 });
-        
         res.json(results);
     } catch (error) {
         console.error("Directory search error:", error);
@@ -34,17 +33,20 @@ router.get('/directory', async (req, res) => {
     }
 });
 
-// --- API for the "Caller ID Checker" (Existing) ---
+// --- API for the "Caller ID Checker" ---
 router.get('/call/:number', async (req, res) => {
     try {
         const { number } = req.params;
+        
+        // 1. Check MongoDB for Verified Enterprise
         const enterprise = await Enterprise.findOne({ registeredNumber: number });
         if (enterprise) return res.json({ status: 'verified', name: enterprise.companyName });
         
-        // Also check the Directory for non-subscribed but known numbers
-        const directoryMatch = await DirectoryEntry.findOne({ phoneNumber: number });
-        if (directoryMatch) return res.json({ status: 'verified', name: directoryMatch.companyName });
+        // 2. Check Directory
+        const dirEntry = await DirectoryEntry.findOne({ phoneNumber: number });
+        if (dirEntry) return res.json({ status: 'verified', name: dirEntry.companyName });
 
+        // 3. Check Spam
         const report = await SpamReport.findOne({ phoneNumber: number });
         if (report) return res.json({ status: 'warning', count: report.reportCount });
         
@@ -52,24 +54,25 @@ router.get('/call/:number', async (req, res) => {
     } catch (error) { res.status(500).json({ status: 'error' }); }
 });
 
-// --- API for the "SMS Sender Check" (Existing) ---
+// --- API for the "SMS Sender Check" ---
 router.get('/sms/:number', async (req, res) => {
     try {
         const { number } = req.params;
+
         const report = await SpamReport.findOne({ phoneNumber: number });
         if (report) return res.json({ status: 'danger', count: report.reportCount });
-        
+
         const enterprise = await Enterprise.findOne({ registeredNumber: number });
         if (enterprise) return res.json({ status: 'verified', name: enterprise.companyName });
 
-        const directoryMatch = await DirectoryEntry.findOne({ phoneNumber: number });
-        if (directoryMatch) return res.json({ status: 'verified', name: directoryMatch.companyName });
+        const dirEntry = await DirectoryEntry.findOne({ phoneNumber: number });
+        if (dirEntry) return res.json({ status: 'verified', name: dirEntry.companyName });
         
         return res.json({ status: 'info' });
     } catch (error) { res.status(500).json({ status: 'error' }); }
 });
 
-// --- API for submitting a report (Existing) ---
+// --- API for submitting a report ---
 router.post('/reports', async (req, res) => {
     const { number, reason, comment } = req.body;
     try {
@@ -81,6 +84,7 @@ router.post('/reports', async (req, res) => {
                 reason: reason,
                 comment: comment
             });
+            console.log(`(Route) Saved customer report for ${enterprise.companyName}`);
         } else {
             await SpamReport.findOneAndUpdate(
                 { phoneNumber: number },
@@ -89,7 +93,7 @@ router.post('/reports', async (req, res) => {
             );
         }
         res.json({ success: true });
-    } catch (error) { res.status(500).json({ success: false }); }
+    } catch (error) { res.status(500).json({ success: false, message: "Error saving report" }); }
 });
 
 module.exports = router;
