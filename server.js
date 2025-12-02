@@ -13,7 +13,7 @@ const lookupRoutes = require('./routes/lookup.js');
 const enterpriseRoutes = require('./routes/enterprise.js');
 const adminRoutes = require('./routes/admin.js');
 const ownerRoutes = require('./routes/owner.js');
-const authRoutes = require('./routes/auth.js'); // <-- THIS MUST BE PRESENT
+const authRoutes = require('./routes/auth.js'); // <--- CRITICAL LINE
 
 // 4. Set up middleware
 app.use(cors());
@@ -24,7 +24,7 @@ app.use('/api/v1/lookup', lookupRoutes);
 app.use('/api/v1/enterprise', enterpriseRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/owner', ownerRoutes);
-app.use('/api/v1/auth', authRoutes); // <-- THIS MUST BE ACTIVE ON RENDER
+app.use('/api/v1/auth', authRoutes); // <--- CRITICAL LINE
 
 // 6. Test Endpoint
 app.get('/', (req, res) => {

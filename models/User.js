@@ -7,7 +7,6 @@ const userSchema = new mongoose.Schema({
         unique: true,
         index: true
     },
-    // In a real system, the initial password would be sent via SMS
     password: { 
         type: String, 
         required: true 
@@ -15,6 +14,14 @@ const userSchema = new mongoose.Schema({
     plan: { 
         type: String, 
         default: 'free' 
+    },
+    fullName: { type: String },
+    email: { type: String },
+    imei: { type: String },
+    age: { type: Number },
+    createdAt: { 
+        type: Date, 
+        default: Date.now 
     }
 });
 
