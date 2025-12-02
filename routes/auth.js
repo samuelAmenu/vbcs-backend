@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
-const User = require('../models/User.js');
-const AuthTicket = require('../models/AuthTicket.js');
+const User = require('../models/user_model.js');
+const AuthTicket = require('../models/auth_ticket.js');
 const ethioTelecomService = require('../services/ethioTelecom.js'); 
 
 // Helper
