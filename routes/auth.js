@@ -13,55 +13,52 @@ router.post('/request-code', async (req, res) => {
         const { phoneNumber } = req.body;
         if (!phoneNumber) return res.status(400).json({ success: false, message: 'Phone number required.' });
         
-        // 1. Clean Input
         const cleanPhone = phoneNumber.trim();
+        const code = generateCode();
         
-        // 2. Manual Cleanup: Delete ANY existing tickets for this number (Old or New)
+        // Force delete any old tickets
         await AuthTicket.deleteMany({ phoneNumber: cleanPhone });
         
-        // 3. Create New Ticket
-        const code = generateCode();
-        await AuthTicket.create({ 
-            phoneNumber: cleanPhone, 
-            code: code 
-            // No expiry logic here anymore
-        });
-
-        // 4. Log for Debugging
-        console.log(`(DEBUG) Created Ticket -> Phone: "${cleanPhone}" | Code: "${code}"`);
+        // Create new ticket
+        await AuthTicket.create({ phoneNumber: cleanPhone, code: code });
+        
+        console.log(`(DEBUG) Ticket Created -> Phone: "${cleanPhone}" | Code: "${code}"`);
 
         await ethioTelecomService.sendSMS(cleanPhone, `Code: ${code}`);
         
         res.json({ success: true, message: 'Code sent.', testCode: code });
     } catch (error) {
         console.error('Request error:', error);
-        res.status(500).json({ success: false });
+        res.status(500).json({ success: false, message: "Server Error" });
     }
 });
 
-// --- API 2: Verify Code ---
+// --- API 2: Verify Code (DEBUG MODE) ---
 router.post('/verify-code', async (req, res) => {
     try {
         const { phoneNumber, code } = req.body;
-        
-        // 1. Clean Inputs
         const cleanPhone = phoneNumber.trim();
         const cleanCode = code.trim();
 
-        console.log(`(DEBUG) Verifying -> Phone: "${cleanPhone}" | Input Code: "${cleanCode}"`);
+        console.log(`(DEBUG) Verifying -> Input Phone: "${cleanPhone}" | Input Code: "${cleanCode}"`);
 
-        // 2. Find Ticket
-        const ticket = await AuthTicket.findOne({ phoneNumber: cleanPhone, code: cleanCode });
+        // 1. Check if a ticket exists for this phone AT ALL
+        const ticket = await AuthTicket.findOne({ phoneNumber: cleanPhone });
         
         if (!ticket) {
-            console.log(`(DEBUG) Verification Failed. No matching ticket found.`);
-            return res.status(401).json({ success: false, message: 'Invalid code.' });
+            console.log(`(DEBUG) Failure: No ticket found for phone "${cleanPhone}"`);
+            return res.status(401).json({ success: false, message: `No code found for ${cleanPhone}. Request a new one.` });
+        }
+
+        // 2. Check if code matches
+        if (ticket.code !== cleanCode) {
+            console.log(`(DEBUG) Failure: Code mismatch. DB has "${ticket.code}", User sent "${cleanCode}"`);
+            return res.status(401).json({ success: false, message: `Wrong code. (Hint: It was ${ticket.code})` });
         }
         
-        // 3. Success - Now we delete the ticket manually
+        // 3. Success! Cleanup
         await AuthTicket.deleteOne({ _id: ticket._id });
 
-        // 4. Handle User Account
         let user = await User.findOne({ phoneNumber: cleanPhone });
         const isNewUser = !user;
 
@@ -75,7 +72,7 @@ router.post('/verify-code', async (req, res) => {
 
     } catch (error) {
         console.error('Verify error:', error);
-        res.status(500).json({ success: false });
+        res.status(500).json({ success: false, message: "Server Error" });
     }
 });
 
@@ -83,47 +80,31 @@ router.post('/verify-code', async (req, res) => {
 router.post('/login-password', async (req, res) => {
     try {
         const { phoneNumber, password } = req.body;
-        const cleanPhone = phoneNumber.trim();
-        const user = await User.findOne({ phoneNumber: cleanPhone });
-        
-        if (!user) return res.status(401).json({ success: false, message: 'Invalid login.' });
+        const user = await User.findOne({ phoneNumber: phoneNumber.trim() });
+        if (!user) return res.status(401).json({ success: false, message: 'User not found.' });
 
         const isMatch = await bcrypt.compare(password, user.password);
         if (isMatch) res.json({ success: true, user: user });
-        else res.status(401).json({ success: false, message: 'Invalid login.' });
+        else res.status(401).json({ success: false, message: 'Wrong password.' });
+    } catch (error) { res.status(500).json({ success: false }); }
+});
+
+// --- API 4: Update Profile ---
+router.post('/update-profile', async (req, res) => {
+    try {
+        const { phoneNumber, password, fullName, imei, email, age } = req.body;
+        const user = await User.findOne({ phoneNumber: phoneNumber });
+        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+
+        if (fullName) user.fullName = fullName;
+        if (imei) user.imei = imei;
+        if (email) user.email = email;
+        if (age) user.age = age;
+        if (password) user.password = await bcrypt.hash(password, 10);
+
+        await user.save();
+        res.json({ success: true, message: 'Profile updated.', user: user });
     } catch (error) { res.status(500).json({ success: false }); }
 });
 
 module.exports = router;
-// --- NEW API 4: Update Profile & Set Password ---
-// (POST /api/v1/auth/update-profile)
-router.post('/update-profile', async (req, res) => {
-    try {
-        const { phoneNumber, password, fullName, imei, email, age } = req.body;
-        
-        // 1. Find User
-        const user = await User.findOne({ phoneNumber: phoneNumber });
-        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
-
-        // 2. Update Fields
-        if (fullName) user.fullName = fullName;
-        if (imei) user.imei = imei; // Ensure User model has this field or strict mode might ignore it
-        if (email) user.email = email;
-        if (age) user.age = age;
-
-        // 3. Securely Update Password (CRITICAL STEP)
-        if (password) {
-            const hashedPassword = await bcrypt.hash(password, 10);
-            user.password = hashedPassword;
-        }
-
-        await user.save();
-        console.log(`(Route) Profile & Password updated for: ${phoneNumber}`);
-        
-        res.json({ success: true, message: 'Profile updated successfully.', user: user });
-
-    } catch (error) {
-        console.error('Profile update error:', error);
-        res.status(500).json({ success: false, message: 'Server error update profile.' });
-    }
-});
