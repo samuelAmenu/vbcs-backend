@@ -95,3 +95,35 @@ router.post('/login-password', async (req, res) => {
 });
 
 module.exports = router;
+// --- NEW API 4: Update Profile & Set Password ---
+// (POST /api/v1/auth/update-profile)
+router.post('/update-profile', async (req, res) => {
+    try {
+        const { phoneNumber, password, fullName, imei, email, age } = req.body;
+        
+        // 1. Find User
+        const user = await User.findOne({ phoneNumber: phoneNumber });
+        if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+
+        // 2. Update Fields
+        if (fullName) user.fullName = fullName;
+        if (imei) user.imei = imei; // Ensure User model has this field or strict mode might ignore it
+        if (email) user.email = email;
+        if (age) user.age = age;
+
+        // 3. Securely Update Password (CRITICAL STEP)
+        if (password) {
+            const hashedPassword = await bcrypt.hash(password, 10);
+            user.password = hashedPassword;
+        }
+
+        await user.save();
+        console.log(`(Route) Profile & Password updated for: ${phoneNumber}`);
+        
+        res.json({ success: true, message: 'Profile updated successfully.', user: user });
+
+    } catch (error) {
+        console.error('Profile update error:', error);
+        res.status(500).json({ success: false, message: 'Server error update profile.' });
+    }
+});
