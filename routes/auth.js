@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
-const User = require('../models/user_model.js');
+// Ensure these match your actual filenames exactly (Case Sensitive on Linux)
+const User = require('../models/user_model.js'); 
 const AuthTicket = require('../models/auth_ticket.js');
 const ethioTelecomService = require('../services/ethioTelecom.js'); 
 
@@ -23,7 +24,7 @@ router.post('/request-code', async (req, res) => {
         // 2. Create new ticket
         await AuthTicket.create({ phoneNumber: cleanPhone, code: code });
         
-        // 3. Send SMS (This is where it was failing)
+        // 3. Send SMS
         console.log(`(Route) Sending SMS Code: ${code} to ${cleanPhone}`);
         await ethioTelecomService.sendSMS(cleanPhone, `Your VBCS code is: ${code}`);
         
@@ -32,12 +33,11 @@ router.post('/request-code', async (req, res) => {
 
     } catch (error) {
         console.error('Request Code Error:', error);
-        // This log will appear in your Render Dashboard if it fails
         res.status(500).json({ success: false, message: "Server Error: Check Logs" });
     }
 });
 
-// --- API 2: Verify Code ---
+// --- API 2: Verify Code (FIXED) ---
 router.post('/verify-code', async (req, res) => {
     try {
         const { phoneNumber, code } = req.body;
@@ -56,12 +56,18 @@ router.post('/verify-code', async (req, res) => {
         const isNewUser = !user;
 
         if (!user) {
-            // Create placeholder user
+            // Create new user with temp password
             const defaultPassword = generateCode();
             const hashedPassword = await bcrypt.hash(defaultPassword, 10);
-            user = await User.create({ phoneNumber: cleanPhone, password: hashedPassword, plan: 'free' });
+            
+            user = await User.create({ 
+                phoneNumber: cleanPhone, 
+                password: hashedPassword, 
+                plan: 'free' 
+            });
         }
         
+        // --- THIS WAS MISSING IN YOUR SNIPPET ---
         res.json({ success: true, message: 'Success', isNewUser: isNewUser, user: user });
 
     } catch (error) {
@@ -95,7 +101,10 @@ router.post('/update-profile', async (req, res) => {
         if (imei) user.imei = imei;
         if (email) user.email = email;
         if (age) user.age = age;
-        if (password) user.password = await bcrypt.hash(password, 10);
+
+        if (password) {
+            user.password = await bcrypt.hash(password, 10);
+        }
 
         await user.save();
         res.json({ success: true, user: user });
