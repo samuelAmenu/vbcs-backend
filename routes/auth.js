@@ -4,7 +4,7 @@ const bcrypt = require('bcrypt');
 
 // --- CRITICAL: Ensure these match your renamed files in the 'models' folder ---
 const User = require('../models/User.js'); 
-const AuthTicket = require('../models/auth_ticket.js');
+const authticket = require('../models/auth_ticket.js');
 const ethioTelecomService = require('../services/ethioTelecom.js'); 
 
 // Helper
@@ -20,10 +20,10 @@ router.post('/request-code', async (req, res) => {
         const code = generateCode();
         
         // 1. Clean up old tickets
-        await AuthTicket.deleteMany({ phoneNumber: cleanPhone });
+        await authticket.deleteMany({ phoneNumber: cleanPhone });
         
         // 2. Create new ticket
-        await AuthTicket.create({ phoneNumber: cleanPhone, code: code });
+        await authticket.create({ phoneNumber: cleanPhone, code: code });
         
         // 3. Send SMS
         console.log(`(Route) Sending SMS Code: ${code} to ${cleanPhone}`);
@@ -44,13 +44,13 @@ router.post('/verify-code', async (req, res) => {
         const cleanPhone = phoneNumber.trim();
         const cleanCode = code.trim();
 
-        const ticket = await AuthTicket.findOne({ phoneNumber: cleanPhone, code: cleanCode });
+        const ticket = await authticket.findOne({ phoneNumber: cleanPhone, code: cleanCode });
         
         if (!ticket) {
             return res.status(401).json({ success: false, message: 'Invalid code.' });
         }
         
-        await AuthTicket.deleteOne({ _id: ticket._id });
+        await authticket.deleteOne({ _id: ticket._id });
 
         let user = await User.findOne({ phoneNumber: cleanPhone });
         const isNewUser = !user;
