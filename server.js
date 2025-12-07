@@ -11,8 +11,7 @@ app.use(express.json());
 // ==========================================
 // 1. DATABASE CONNECTION
 // ==========================================
-// Use your actual MongoDB URI in .env, or paste it here for testing
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://vbcs_admin:vbcs_password_123@cluster0.mongodb.net/VBCS_DB?retryWrites=true&w=majority";
+mongodb+srv://amenuil19_db_user:<db_password>@vbcs-project.7far1jp.mongodb.net/?appName=VBCS-Project
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log('✅ MongoDB Connected'))
