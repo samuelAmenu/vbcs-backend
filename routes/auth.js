@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
-// Ensure these match your actual filenames exactly (Case Sensitive on Linux)
-const User = require('../models/user_model.js'); 
+
+// --- CRITICAL: Ensure these match your renamed files in the 'models' folder ---
+const User = require('../models/user.js'); 
 const AuthTicket = require('../models/auth_ticket.js');
 const ethioTelecomService = require('../services/ethioTelecom.js'); 
 
@@ -28,7 +29,6 @@ router.post('/request-code', async (req, res) => {
         console.log(`(Route) Sending SMS Code: ${code} to ${cleanPhone}`);
         await ethioTelecomService.sendSMS(cleanPhone, `Your VBCS code is: ${code}`);
         
-        // 4. Respond
         res.json({ success: true, message: 'Code sent.', testCode: code });
 
     } catch (error) {
@@ -37,7 +37,7 @@ router.post('/request-code', async (req, res) => {
     }
 });
 
-// --- API 2: Verify Code (FIXED) ---
+// --- API 2: Verify Code ---
 router.post('/verify-code', async (req, res) => {
     try {
         const { phoneNumber, code } = req.body;
@@ -56,10 +56,11 @@ router.post('/verify-code', async (req, res) => {
         const isNewUser = !user;
 
         if (!user) {
-            // Create new user with temp password
+            // Create placeholder user
             const defaultPassword = generateCode();
             const hashedPassword = await bcrypt.hash(defaultPassword, 10);
             
+            // Ensure schema allows sparse/optional fields if they aren't provided here
             user = await User.create({ 
                 phoneNumber: cleanPhone, 
                 password: hashedPassword, 
@@ -67,7 +68,6 @@ router.post('/verify-code', async (req, res) => {
             });
         }
         
-        // --- THIS WAS MISSING IN YOUR SNIPPET ---
         res.json({ success: true, message: 'Success', isNewUser: isNewUser, user: user });
 
     } catch (error) {
