@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcrypt');
 
 // --- CRITICAL: Ensure these match your renamed files in the 'models' folder ---
-const User = require('../models/user.js'); 
+const User = require('../models/User.js'); 
 const AuthTicket = require('../models/auth_ticket.js');
 const ethioTelecomService = require('../services/ethioTelecom.js'); 
 
