@@ -17,4 +17,4 @@ const authTicketSchema = new mongoose.Schema({
     }
 });
 
-module.exports = mongoose.model('AuthTicket', authTicketSchema);
+module.exports = mongoose.model('AuthTicket', AuthTicketSchema);
