@@ -9,13 +9,17 @@ app.use(cors());
 app.use(express.json());
 
 // ==========================================
+//// ==========================================
 // 1. DATABASE CONNECTION
 // ==========================================
-mongodb+srv://amenuil19_db_user:<db_password>@vbcs-project.7far1jp.mongodb.net/?appName=VBCS-Project
+
+// FIX: Wrap the address in quotes " " and assign it to const MONGO_URI
+// IMPORTANT: Replace <db_password> with your actual password!
+const MONGO_URI = "mongodb+srv://amenuil19_db_user:<db_password>@vbcs-project.7far1jp.mongodb.net/?appName=VBCS-Project";
 
 mongoose.connect(MONGO_URI)
-  .then(() => console.log('✅ MongoDB Connected'))
-  .catch(err => console.error('❌ DB Connection Error:', err));
+  .then(() => console.log('✅ MongoDB Connected'))
+  .catch(err => console.error('❌ DB Connection Error:', err));
 
 // ==========================================
 // 2. MONGOOSE SCHEMAS
