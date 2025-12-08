@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
 
-// --- CRITICAL: Ensure these match your renamed files in the 'models' folder ---
+// --- 1. CORRECT IMPORTS (Case Sensitive!) ---
+// Ensure your files in /models/ are named exactly "User.js" and "AuthTicket.js"
 const User = require('../models/User.js'); 
-const authticket = require('../models/auth_ticket.js');
+const AuthTicket = require('../models/AuthTicket.js');
 const ethioTelecomService = require('../services/ethioTelecom.js'); 
 
 // Helper
@@ -20,15 +21,20 @@ router.post('/request-code', async (req, res) => {
         const code = generateCode();
         
         // 1. Clean up old tickets
-        await authticket.deleteMany({ phoneNumber: cleanPhone });
+        await AuthTicket.deleteMany({ phoneNumber: cleanPhone });
         
         // 2. Create new ticket
-        await authticket.create({ phoneNumber: cleanPhone, code: code });
+        await AuthTicket.create({ phoneNumber: cleanPhone, code: code });
         
         // 3. Send SMS
         console.log(`(Route) Sending SMS Code: ${code} to ${cleanPhone}`);
-        await ethioTelecomService.sendSMS(cleanPhone, `Your VBCS code is: ${code}`);
+        try {
+            await ethioTelecomService.sendSMS(cleanPhone, `Your VBCS code is: ${code}`);
+        } catch (smsErr) {
+            console.error("SMS Service Warning:", smsErr.message);
+        }
         
+        // 4. Respond
         res.json({ success: true, message: 'Code sent.', testCode: code });
 
     } catch (error) {
@@ -44,14 +50,17 @@ router.post('/verify-code', async (req, res) => {
         const cleanPhone = phoneNumber.trim();
         const cleanCode = code.trim();
 
-        const ticket = await authticket.findOne({ phoneNumber: cleanPhone, code: cleanCode });
+        // 1. Find the ticket
+        const ticket = await AuthTicket.findOne({ phoneNumber: cleanPhone, code: cleanCode });
         
         if (!ticket) {
-            return res.status(401).json({ success: false, message: 'Invalid code.' });
+            return res.status(401).json({ success: false, message: 'Invalid code or expired.' });
         }
         
-        await authticket.deleteOne({ _id: ticket._id });
+        // 2. Delete used ticket
+        await AuthTicket.deleteOne({ _id: ticket._id });
 
+        // 3. Find or Create User
         let user = await User.findOne({ phoneNumber: cleanPhone });
         const isNewUser = !user;
 
@@ -60,11 +69,15 @@ router.post('/verify-code', async (req, res) => {
             const defaultPassword = generateCode();
             const hashedPassword = await bcrypt.hash(defaultPassword, 10);
             
-            // Ensure schema allows sparse/optional fields if they aren't provided here
             user = await User.create({ 
                 phoneNumber: cleanPhone, 
                 password: hashedPassword, 
-                plan: 'free' 
+                plan: 'free',
+                // Optional fields initialized as empty/null to prevent schema errors
+                fullName: '',
+                email: '',
+                imei: '',
+                age: null
             });
         }
         
@@ -72,7 +85,7 @@ router.post('/verify-code', async (req, res) => {
 
     } catch (error) {
         console.error('Verify Error:', error);
-        res.status(500).json({ success: false, message: "Server Error" });
+        res.status(500).json({ success: false, message: "Server Verification Error" });
     }
 });
 
@@ -86,7 +99,10 @@ router.post('/login-password', async (req, res) => {
         const isMatch = await bcrypt.compare(password, user.password);
         if (isMatch) res.json({ success: true, user: user });
         else res.status(401).json({ success: false, message: 'Invalid credentials.' });
-    } catch (error) { res.status(500).json({ success: false }); }
+    } catch (error) { 
+        console.error("Login Error:", error);
+        res.status(500).json({ success: false }); 
+    }
 });
 
 // --- API 4: Update Profile ---
@@ -109,7 +125,10 @@ router.post('/update-profile', async (req, res) => {
         await user.save();
         res.json({ success: true, user: user });
 
-    } catch (error) { res.status(500).json({ success: false }); }
+    } catch (error) { 
+        console.error("Profile Update Error:", error);
+        res.status(500).json({ success: false }); 
+    }
 });
 
 module.exports = router;
