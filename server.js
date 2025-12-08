@@ -1,46 +1,51 @@
-// 1. Import DOTENV first to load local secrets
-require('dotenv').config();
+// ==================================================
+//  VBCS MASTER SERVER (Production Ready)
+// ==================================================
 
-// 2. Import core tools
+// 1. SETUP & IMPORTS
+require('dotenv').config();
 const express = require('express');
+const mongoose = require('mongoose'); // Added Mongoose here
 const cors = require('cors');
 const app = express();
+
 const PORT = process.env.PORT || 3000;
-const connectToDatabase = require('./db_connection.js');
 
-// 3. Import route files
-const authRoutes = require('./routes/auth.js');
-const lookupRoutes = require('./routes/lookup.js');
-const ownerRoutes = require('./routes/owner.js');
-const guardianRoutes = require('./routes/guardian.js'); // <-- This was missing
-const adminRoutes = require('./routes/admin.js');
+// 2. DATABASE CONNECTION (Integrated)
+// --------------------------------------------------
+// REPLACE <your_real_password> BELOW WITH YOUR ACTUAL PASSWORD
+// REMOVE THE < > SYMBOLS
+const MONGO_URI = "mongodb+srv://amenuil19_db_user:<your_real_password>@vbcs-project.7far1jp.mongodb.net/?appName=VBCS-Project";
 
-// 4. Set up middleware
-app.use(cors());
-app.use(express.json());
+mongoose.connect(MONGO_URI)
+  .then(() => console.log('✅ MongoDB Connected Successfully'))
+  .catch(err => console.error('❌ DB Connection Error:', err));
 
-// 5. Connect Routes
+// 3. IMPORT ROUTE ENGINES
+// These files handle the specific logic for each feature
+const authRoutes = require('./routes/auth.js');      
+const lookupRoutes = require('./routes/lookup.js');  
+const ownerRoutes = require('./routes/owner.js');    
+const guardianRoutes = require('./routes/guardian.js'); 
+const adminRoutes = require('./routes/admin.js'); 
+
+// 4. MIDDLEWARE
+app.use(cors()); // Allow Frontend access
+app.use(express.json()); // Allow JSON data
+
+// 5. CONNECT ROUTES
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/lookup', lookupRoutes);
 app.use('/api/v1/owner', ownerRoutes);
 app.use('/api/v1/guardian', guardianRoutes);
 app.use('/api/v1/admin', adminRoutes);
 
-// 6. Test Endpoint
+// 6. HEALTH CHECK
 app.get('/', (req, res) => {
-    res.send('✅ VBCS Production Backend is Active');
+    res.send('✅ VBCS Backend is Live & Connected');
 });
 
-// 7. START THE SERVER
-const startServer = async () => {
-    try {
-        await connectToDatabase();
-        app.listen(PORT, () => {
-            console.log(`🚀 Server running on port ${PORT}`);
-        });
-    } catch (error) {
-        console.error("❌ Failed to start server:", error);
-    }
-};
-
-startServer();
+// 7. START SERVER
+app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+});
