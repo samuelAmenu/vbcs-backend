@@ -1,51 +1,35 @@
-// ==================================================
-//  VBCS MASTER SERVER (Production Ready)
-// ==================================================
-
-// 1. SETUP & IMPORTS
-require('dotenv').config();
+/* ==========================================
+   DIAGNOSTIC SERVER.JS - USE THIS TO TEST DB
+   ========================================== */
 const express = require('express');
-const mongoose = require('mongoose'); // Added Mongoose here
-const cors = require('cors');
+const mongoose = require('mongoose');
 const app = express();
 
-const PORT = process.env.PORT || 3000;
+// --- REPLACE THIS WITH YOUR REAL STRING ---
+const MONGO_URI = "mongodb+srv://vbcs_admin:YOUR_REAL_PASSWORD_HERE@cluster0.mongodb.net/VBCS_DB?retryWrites=true&w=majority";
 
-// 2. DATABASE CONNECTION (Integrated)
-// --------------------------------------------------
-// REPLACE <your_real_password> BELOW WITH YOUR ACTUAL PASSWORD
-// REMOVE THE < > SYMBOLS
-const MONGO_URI = "mongodb+srv://amenuil19_db_user:<your_real_password>@vbcs-project.7far1jp.mongodb.net/?appName=VBCS-Project";
+console.log("------------------------------------------------");
+console.log("⏳ Attempting to connect to MongoDB...");
+console.log("------------------------------------------------");
 
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('✅ MongoDB Connected Successfully'))
-  .catch(err => console.error('❌ DB Connection Error:', err));
-
-// 3. IMPORT ROUTE ENGINES
-// These files handle the specific logic for each feature
-const authRoutes = require('./routes/auth.js');      
-const lookupRoutes = require('./routes/lookup.js');  
-const ownerRoutes = require('./routes/owner.js');    
-const guardianRoutes = require('./routes/guardian.js'); 
-const adminRoutes = require('./routes/admin.js'); 
-
-// 4. MIDDLEWARE
-app.use(cors()); // Allow Frontend access
-app.use(express.json()); // Allow JSON data
-
-// 5. CONNECT ROUTES
-app.use('/api/v1/auth', authRoutes);
-app.use('/api/v1/lookup', lookupRoutes);
-app.use('/api/v1/owner', ownerRoutes);
-app.use('/api/v1/guardian', guardianRoutes);
-app.use('/api/v1/admin', adminRoutes);
-
-// 6. HEALTH CHECK
-app.get('/', (req, res) => {
-    res.send('✅ VBCS Backend is Live & Connected');
+// Specific connection options to show errors faster
+mongoose.connect(MONGO_URI, {
+    serverSelectionTimeoutMS: 5000 // Fail after 5 seconds instead of 10
+})
+.then(() => {
+    console.log("✅✅✅ SUCCESS! MongoDB is Connected!");
+    console.log("------------------------------------------------");
+})
+.catch(err => {
+    console.log("❌❌❌ CONNECTION FAILED");
+    console.error("Error Code:", err.code);
+    console.error("Error Message:", err.message);
+    console.log("------------------------------------------------");
+    console.log("HINT: Did you whitelist 0.0.0.0/0 in Network Access?");
+    console.log("HINT: Is your password correct? (No special chars like @)");
 });
 
-// 7. START SERVER
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-});
+app.get('/', (req, res) => res.send('Diagnostic Mode Active'));
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () => console.log(`🚀 Diagnostic Server running on port ${PORT}`));
