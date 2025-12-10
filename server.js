@@ -16,8 +16,8 @@ app.use(express.json());
 // 1. DATABASE CONNECTION
 // ==========================================
 
-// ⚠️ REPLACE <db_password> BELOW WITH YOUR REAL PASSWORD ⚠️
-const MONGO_URI = "mongodb+srv://amenuil19_db_user:<ehs04IyMn9Uz3S5P>@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
+// ✅ CORRECTED CONNECTION STRING (Brackets removed)
+const MONGO_URI = "mongodb+srv://amenuil19_db_user:ehs04IyMn9Uz3S5P@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
 
 console.log("⏳ Connecting to MongoDB...");
 
@@ -26,8 +26,7 @@ mongoose.connect(MONGO_URI)
   .catch(err => {
       console.error('❌ DB Connection Error:', err.message);
       console.log('---------------------------------------------------');
-      console.log('HINT 1: Did you replace <db_password> with your real password?');
-      console.log('HINT 2: Go to MongoDB Atlas -> Network Access -> Add IP Address -> Allow Access from Anywhere (0.0.0.0/0)');
+      console.log('HINT: Go to MongoDB Atlas -> Network Access -> Add IP Address -> Allow Access from Anywhere (0.0.0.0/0)');
       console.log('---------------------------------------------------');
   });
 
@@ -251,4 +250,4 @@ app.post('/api/v1/owner/suspend-number', async (req, res) => {
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-}); 
+});
