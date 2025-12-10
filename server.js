@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS MASTER SERVER (Production Ready + Password Login)
+   VBCS MASTER SERVER (Strict Profile Logic)
    ================================================== */
 
 require('dotenv').config();
@@ -16,7 +16,7 @@ app.use(express.json());
 // 1. DATABASE CONNECTION
 // ==========================================
 
-// ✅ FIXED: Brackets < > removed from password
+// ⚠️ REPLACE WITH YOUR REAL PASSWORD
 const MONGO_URI = "mongodb+srv://amenuil19_db_user:ehs04IyMn9Uz3S5P@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
 
 console.log("⏳ Connecting to MongoDB...");
@@ -25,17 +25,17 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log('✅ MongoDB Connected Successfully'))
   .catch(err => {
       console.error('❌ DB Connection Error:', err.message);
-      console.log('HINT: Go to MongoDB Atlas -> Network Access -> Add IP Address -> Allow Access from Anywhere (0.0.0.0/0)');
+      console.log('HINT: Check Network Access in MongoDB Atlas (Whitelist 0.0.0.0/0)');
   });
 
 // ==========================================
 // 2. DATABASE SCHEMAS
 // ==========================================
 
-// User Schema (Added Password field)
+// User Schema
 const userSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true, unique: true },
-    password: { type: String }, // NEW: Stores password
+    password: { type: String }, // Stores password
     fullName: String,
     email: String,
     age: Number,
@@ -106,7 +106,7 @@ app.post('/api/v1/auth/request-code', async (req, res) => {
     }
 });
 
-// 2. Verify OTP
+// 2. Verify OTP (CRITICAL UPDATE: STRICT CHECK)
 app.post('/api/v1/auth/verify-code', async (req, res) => {
     try {
         const { phoneNumber, code } = req.body;
@@ -118,13 +118,17 @@ app.post('/api/v1/auth/verify-code', async (req, res) => {
         user.otp = null;
         await user.save();
         
-        res.json({ success: true, user: user, isNewUser: !user.profileComplete });
+        // STRICT CHECK:
+        // Even if profileComplete is true, if Name or Password is missing, force Wizard.
+        const isIncomplete = !user.profileComplete || !user.fullName || !user.password;
+
+        res.json({ success: true, user: user, isNewUser: isIncomplete });
     } catch (err) {
         res.status(500).json({ success: false });
     }
 });
 
-// 3. Password Login (NEW ROUTE)
+// 3. Password Login
 app.post('/api/v1/auth/login-password', async (req, res) => {
     try {
         const { phoneNumber, password } = req.body;
@@ -132,7 +136,7 @@ app.post('/api/v1/auth/login-password', async (req, res) => {
 
         if (!user) return res.status(400).json({ success: false, message: "User not found" });
         
-        // Check password (simple comparison)
+        // Simple password check
         if (user.password !== password) {
             return res.status(400).json({ success: false, message: "Incorrect Password" });
         }
@@ -143,14 +147,13 @@ app.post('/api/v1/auth/login-password', async (req, res) => {
     }
 });
 
-// 4. Save Profile (Updated to save Password)
+// 4. Save Profile
 app.post('/api/v1/profile', async (req, res) => {
     try {
         const { phoneNumber, fullName, email, age, password } = req.body;
         
-        // Create update object
         const updateData = { fullName, email, age, profileComplete: true };
-        if (password) updateData.password = password; // Save password if provided
+        if (password) updateData.password = password; 
 
         const user = await User.findOneAndUpdate(
             { phoneNumber },
