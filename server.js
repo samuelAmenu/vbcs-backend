@@ -17,7 +17,7 @@ app.use(express.json());
 // ==========================================
 
 // ✅ CORRECT PASSWORD INSERTED
-const MONGO_URI = "mongodb+srv://amenuil19_db_user:SAMI!ame11@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
+const MONGO_URI = "mongodb+srv://sami_dbuser:SAMI!ame11@vbcs-project.7far1jp.mongodb.net/?appName=VBCS-Project;
 
 console.log("⏳ Connecting to MongoDB...");
 
