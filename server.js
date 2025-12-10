@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS MASTER SERVER (Strict Profile + Password Fix)
+   VBCS MASTER SERVER (Final Production Version)
    ================================================== */
 
 require('dotenv').config();
@@ -16,7 +16,7 @@ app.use(express.json());
 // 1. DATABASE CONNECTION
 // ==========================================
 
-// ✅ PASSWORD INCLUDED CORRECTLY
+// ✅ CORRECT PASSWORD INSERTED
 const MONGO_URI = "mongodb+srv://amenuil19_db_user:ehs04IyMn9Uz3S5P@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
 
 console.log("⏳ Connecting to MongoDB...");
@@ -32,10 +32,10 @@ mongoose.connect(MONGO_URI)
 // 2. DATABASE SCHEMAS
 // ==========================================
 
-// User Schema
+// User Schema (Includes Password)
 const userSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true, unique: true },
-    password: { type: String }, // Stores password
+    password: { type: String }, // Stores user password
     fullName: String,
     email: String,
     age: Number,
@@ -82,31 +82,56 @@ const Enterprise = mongoose.model('Enterprise', enterpriseSchema);
 
 /* --- AUTHENTICATION --- */
 
-// 1. Request OTP
+// 1. Request OTP (DEBUG VERSION)
 app.post('/api/v1/auth/request-code', async (req, res) => {
     try {
         const { phoneNumber } = req.body;
+        console.log("1. Received Request for:", phoneNumber);
+
         if (!phoneNumber) return res.status(400).json({ success: false, message: "Phone required" });
+
+        // Test DB Connection State
+        // 0 = disconnected, 1 = connected, 2 = connecting
+        if (mongoose.connection.readyState !== 1) {
+            console.log("❌ DB NOT CONNECTED. State:", mongoose.connection.readyState);
+            return res.status(500).json({ 
+                success: false, 
+                message: "DB Disconnected. Check Render Logs." 
+            });
+        }
 
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         
+        console.log("2. Searching for user...");
         let user = await User.findOne({ phoneNumber });
+        
         if (!user) {
+            console.log("3. Creating NEW user...");
             user = new User({ phoneNumber });
+        } else {
+            console.log("3. Found EXISTING user...");
         }
+        
         user.otp = otp;
         user.otpExpires = new Date(Date.now() + 10 * 60000); 
+        
+        console.log("4. Saving to DB...");
         await user.save();
 
-        console.log(`🔐 OTP for ${phoneNumber}: ${otp}`);
+        console.log(`✅ Success! OTP: ${otp}`);
         res.json({ success: true, message: "Code sent", testCode: otp });
+
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ success: false, message: "Server Error" });
+        console.error("🔥 CRITICAL ERROR:", err);
+        // SEND THE REAL ERROR TO THE FRONTEND
+        res.status(500).json({ 
+            success: false, 
+            message: "DB Error: " + err.message 
+        });
     }
 });
 
-// 2. Verify OTP (CRITICAL UPDATE: STRICT CHECK)
+// 2. Verify OTP (With Strict Profile Check)
 app.post('/api/v1/auth/verify-code', async (req, res) => {
     try {
         const { phoneNumber, code } = req.body;
@@ -118,8 +143,7 @@ app.post('/api/v1/auth/verify-code', async (req, res) => {
         user.otp = null;
         await user.save();
         
-        // STRICT CHECK:
-        // Even if profileComplete is true, if Name or Password is missing, force Wizard.
+        // STRICT CHECK: Force Wizard if Name or Password is missing
         const isIncomplete = !user.profileComplete || !user.fullName || !user.password;
 
         res.json({ success: true, user: user, isNewUser: isIncomplete });
@@ -136,7 +160,7 @@ app.post('/api/v1/auth/login-password', async (req, res) => {
 
         if (!user) return res.status(400).json({ success: false, message: "User not found" });
         
-        // Simple password check
+        // Check password
         if (user.password !== password) {
             return res.status(400).json({ success: false, message: "Incorrect Password" });
         }
@@ -147,16 +171,16 @@ app.post('/api/v1/auth/login-password', async (req, res) => {
     }
 });
 
-// 4. Save Profile (CRITICAL FIX: SAVE PASSWORD)
+// 4. Save Profile (With Password Saving Fix)
 app.post('/api/v1/profile', async (req, res) => {
     try {
         const { phoneNumber, fullName, email, age, password } = req.body;
         
-        // Build the update object
+        // Build update object
         const updateData = { fullName, email, age, profileComplete: true };
         
-        // ✅ BUG FIX: Actually save the password to the database
-        if (password) {
+        // ✅ CRITICAL FIX: Save the password if provided
+        if (password && password.length > 0) {
             updateData.password = password; 
         }
 
@@ -167,6 +191,7 @@ app.post('/api/v1/profile', async (req, res) => {
         );
         res.json({ success: true, user });
     } catch (err) {
+        console.error("Profile Save Error:", err);
         res.status(500).json({ success: false });
     }
 });
@@ -188,10 +213,15 @@ app.post('/api/v1/profile/device', async (req, res) => {
 app.post('/api/v1/reports', async (req, res) => {
     try {
         const { number, reason, comments } = req.body;
+        console.log("⚠️ Received Report:", number);
+        
         const newReport = new SpamReport({ number, reason, comments });
         await newReport.save();
+        
         res.json({ success: true });
-    } catch (error) { res.status(500).json({ success: false }); }
+    } catch (error) {
+        res.status(500).json({ success: false });
+    }
 });
 
 /* --- LOOKUP --- */
