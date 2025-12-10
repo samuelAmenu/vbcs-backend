@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS MASTER SERVER (All-in-One)
+   VBCS MASTER SERVER (Production Ready)
    ================================================== */
 
 require('dotenv').config();
@@ -16,9 +16,8 @@ app.use(express.json());
 // 1. DATABASE CONNECTION
 // ==========================================
 
-// ⚠️ I added your specific URL below. 
-// You MUST replace "PASTE_YOUR_REAL_PASSWORD_HERE" with your actual password.
-const MONGO_URI = "mongodb+srv://amenuil19_db_user:<db_password>@vbcs-project.7far1jp.mongodb.net/?appName=VBCS-Project";
+// ⚠️ REPLACE <db_password> BELOW WITH YOUR REAL PASSWORD ⚠️
+const MONGO_URI = "mongodb+srv://amenuil19_db_user:<ehs04IyMn9Uz3S5P>@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
 
 console.log("⏳ Connecting to MongoDB...");
 
@@ -26,15 +25,17 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log('✅ MongoDB Connected Successfully'))
   .catch(err => {
       console.error('❌ DB Connection Error:', err.message);
-      console.log('HINT: Did you replace PASTE_YOUR_REAL_PASSWORD_HERE with your actual password?');
-      console.log('HINT: Did you whitelist IP 0.0.0.0/0 in MongoDB Atlas?');
+      console.log('---------------------------------------------------');
+      console.log('HINT 1: Did you replace <db_password> with your real password?');
+      console.log('HINT 2: Go to MongoDB Atlas -> Network Access -> Add IP Address -> Allow Access from Anywhere (0.0.0.0/0)');
+      console.log('---------------------------------------------------');
   });
 
 // ==========================================
-// 2. DATABASE SCHEMAS (The Data Models)
+// 2. DATABASE SCHEMAS
 // ==========================================
 
-// User Schema (Subscribers)
+// User Schema
 const userSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true, unique: true },
     fullName: String,
@@ -43,22 +44,22 @@ const userSchema = new mongoose.Schema({
     otp: String,
     otpExpires: Date,
     profileComplete: { type: Boolean, default: false },
-    device: { name: String, imei: String }, // For Guardian
+    device: { name: String, imei: String },
     createdAt: { type: Date, default: Date.now }
 });
 const User = mongoose.model('User', userSchema);
 
-// Report Schema (Spam/Fraud)
+// Report Schema
 const reportSchema = new mongoose.Schema({
     number: String,
     reason: String,
     comments: String,
-    status: { type: String, default: 'Pending' }, // Pending, Suspended
+    status: { type: String, default: 'Pending' },
     createdAt: { type: Date, default: Date.now }
 });
 const SpamReport = mongoose.model('SpamReport', reportSchema);
 
-// Directory Schema (Verified Businesses)
+// Directory Schema
 const directorySchema = new mongoose.Schema({
     phoneNumber: String,
     companyName: String,
@@ -67,7 +68,7 @@ const directorySchema = new mongoose.Schema({
 });
 const DirectoryEntry = mongoose.model('DirectoryEntry', directorySchema);
 
-// Enterprise Schema (B2B Customers)
+// Enterprise Schema
 const enterpriseSchema = new mongoose.Schema({
     companyName: String,
     monthlyBill: Number,
@@ -78,7 +79,7 @@ const Enterprise = mongoose.model('Enterprise', enterpriseSchema);
 
 
 // ==========================================
-// 3. API ROUTES (The Logic)
+// 3. API ROUTES
 // ==========================================
 
 /* --- AUTHENTICATION --- */
@@ -87,16 +88,14 @@ app.post('/api/v1/auth/request-code', async (req, res) => {
         const { phoneNumber } = req.body;
         if (!phoneNumber) return res.status(400).json({ success: false, message: "Phone required" });
 
-        // Generate Code
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         
-        // Save to DB (Upsert: Create if new, update if exists)
         let user = await User.findOne({ phoneNumber });
         if (!user) {
             user = new User({ phoneNumber });
         }
         user.otp = otp;
-        user.otpExpires = new Date(Date.now() + 10 * 60000); // 10 mins
+        user.otpExpires = new Date(Date.now() + 10 * 60000); 
         await user.save();
 
         console.log(`🔐 OTP for ${phoneNumber}: ${otp}`);
@@ -115,11 +114,9 @@ app.post('/api/v1/auth/verify-code', async (req, res) => {
         if (!user) return res.status(400).json({ success: false, message: "User not found" });
         if (user.otp !== code) return res.status(400).json({ success: false, message: "Invalid Code" });
 
-        // Success
         user.otp = null;
         await user.save();
         
-        // Send back user info so app knows if they need to finish profile
         res.json({ success: true, user: user, isNewUser: !user.profileComplete });
     } catch (err) {
         res.status(500).json({ success: false });
@@ -140,10 +137,9 @@ app.post('/api/v1/profile', async (req, res) => {
     }
 });
 
-// Guardian Device Registration
 app.post('/api/v1/profile/device', async (req, res) => {
     try {
-        const { phoneNumber, deviceName, deviceModel, imei } = req.body;
+        const { phoneNumber, deviceName, imei } = req.body;
         const user = await User.findOne({ phoneNumber });
         if(!user) return res.status(404).json({ success: false });
 
@@ -153,7 +149,7 @@ app.post('/api/v1/profile/device', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false }); }
 });
 
-/* --- REPORTS (Public App) --- */
+/* --- REPORTS --- */
 app.post('/api/v1/reports', async (req, res) => {
     try {
         const { number, reason, comments } = req.body;
@@ -164,21 +160,18 @@ app.post('/api/v1/reports', async (req, res) => {
         
         res.json({ success: true });
     } catch (error) {
-        console.error("Report Error", error);
         res.status(500).json({ success: false });
     }
 });
 
-/* --- LOOKUP (Caller ID) --- */
+/* --- LOOKUP --- */
 app.get('/api/v1/lookup/call/:number', async (req, res) => {
     try {
         const { number } = req.params;
         
-        // 1. Check Directory
         const dirMatch = await DirectoryEntry.findOne({ phoneNumber: number });
         if(dirMatch) return res.json({ status: 'verified', name: dirMatch.companyName });
 
-        // 2. Check Spam Reports
         const spamCount = await SpamReport.countDocuments({ number: number });
         if(spamCount > 0) return res.json({ status: 'warning', count: spamCount });
 
@@ -186,11 +179,9 @@ app.get('/api/v1/lookup/call/:number', async (req, res) => {
     } catch (err) { res.status(500).json({ status: 'error' }); }
 });
 
-/* --- LOOKUP (SMS) --- */
 app.get('/api/v1/lookup/sms/:number', async (req, res) => {
     try {
         const { number } = req.params;
-        // Simple logic for SMS: If many reports -> Danger
         const spamCount = await SpamReport.countDocuments({ number: number });
         if(spamCount > 2) return res.json({ status: 'danger', count: spamCount });
         
@@ -201,7 +192,6 @@ app.get('/api/v1/lookup/sms/:number', async (req, res) => {
     } catch (err) { res.status(500).json({ status: 'error' }); }
 });
 
-/* --- DIRECTORY LIST --- */
 app.get('/api/v1/lookup/directory', async (req, res) => {
     try {
         const { search, category } = req.query;
@@ -226,7 +216,6 @@ app.post('/api/v1/owner/login', (req, res) => {
 
 app.get('/api/v1/owner/stats', async (req, res) => {
     try {
-        // Mock revenue logic
         res.json({
             totalMonthlyRevenue: 50000, 
             totalEnterprises: await Enterprise.countDocuments(),
