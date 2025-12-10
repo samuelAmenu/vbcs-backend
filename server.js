@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS MASTER SERVER (Production Ready)
+   VBCS MASTER SERVER (Production Ready + Password Login)
    ================================================== */
 
 require('dotenv').config();
@@ -16,7 +16,7 @@ app.use(express.json());
 // 1. DATABASE CONNECTION
 // ==========================================
 
-// ✅ CORRECTED CONNECTION STRING (Brackets removed)
+// ✅ FIXED: Brackets < > removed from password
 const MONGO_URI = "mongodb+srv://amenuil19_db_user:ehs04IyMn9Uz3S5P@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
 
 console.log("⏳ Connecting to MongoDB...");
@@ -25,18 +25,17 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log('✅ MongoDB Connected Successfully'))
   .catch(err => {
       console.error('❌ DB Connection Error:', err.message);
-      console.log('---------------------------------------------------');
       console.log('HINT: Go to MongoDB Atlas -> Network Access -> Add IP Address -> Allow Access from Anywhere (0.0.0.0/0)');
-      console.log('---------------------------------------------------');
   });
 
 // ==========================================
 // 2. DATABASE SCHEMAS
 // ==========================================
 
-// User Schema
+// User Schema (Added Password field)
 const userSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true, unique: true },
+    password: { type: String }, // NEW: Stores password
     fullName: String,
     email: String,
     age: Number,
@@ -82,6 +81,8 @@ const Enterprise = mongoose.model('Enterprise', enterpriseSchema);
 // ==========================================
 
 /* --- AUTHENTICATION --- */
+
+// 1. Request OTP
 app.post('/api/v1/auth/request-code', async (req, res) => {
     try {
         const { phoneNumber } = req.body;
@@ -105,6 +106,7 @@ app.post('/api/v1/auth/request-code', async (req, res) => {
     }
 });
 
+// 2. Verify OTP
 app.post('/api/v1/auth/verify-code', async (req, res) => {
     try {
         const { phoneNumber, code } = req.body;
@@ -122,12 +124,37 @@ app.post('/api/v1/auth/verify-code', async (req, res) => {
     }
 });
 
+// 3. Password Login (NEW ROUTE)
+app.post('/api/v1/auth/login-password', async (req, res) => {
+    try {
+        const { phoneNumber, password } = req.body;
+        const user = await User.findOne({ phoneNumber });
+
+        if (!user) return res.status(400).json({ success: false, message: "User not found" });
+        
+        // Check password (simple comparison)
+        if (user.password !== password) {
+            return res.status(400).json({ success: false, message: "Incorrect Password" });
+        }
+
+        res.json({ success: true, user: user });
+    } catch (err) {
+        res.status(500).json({ success: false, message: "Login Error" });
+    }
+});
+
+// 4. Save Profile (Updated to save Password)
 app.post('/api/v1/profile', async (req, res) => {
     try {
-        const { phoneNumber, fullName, email, age } = req.body;
+        const { phoneNumber, fullName, email, age, password } = req.body;
+        
+        // Create update object
+        const updateData = { fullName, email, age, profileComplete: true };
+        if (password) updateData.password = password; // Save password if provided
+
         const user = await User.findOneAndUpdate(
             { phoneNumber },
-            { fullName, email, age, profileComplete: true },
+            updateData,
             { new: true }
         );
         res.json({ success: true, user });
@@ -136,6 +163,7 @@ app.post('/api/v1/profile', async (req, res) => {
     }
 });
 
+// 5. Device Registration
 app.post('/api/v1/profile/device', async (req, res) => {
     try {
         const { phoneNumber, deviceName, imei } = req.body;
