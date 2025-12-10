@@ -15,8 +15,10 @@ app.use(express.json());
 // ==========================================
 // 1. DATABASE CONNECTION
 // ==========================================
-// ⚠️ REPLACE THE PASSWORD BELOW. DO NOT KEEP THE < > SYMBOLS.
-const MONGO_URI = "mongodb+srv://amenuil19_db_user:@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority";
+
+// ⚠️ I added your specific URL below. 
+// You MUST replace "PASTE_YOUR_REAL_PASSWORD_HERE" with your actual password.
+const MONGO_URI = "mongodb+srv://amenuil19_db_user:<db_password>@vbcs-project.7far1jp.mongodb.net/?appName=VBCS-Project";
 
 console.log("⏳ Connecting to MongoDB...");
 
@@ -24,7 +26,7 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log('✅ MongoDB Connected Successfully'))
   .catch(err => {
       console.error('❌ DB Connection Error:', err.message);
-      console.log('HINT: Did you update the password in server.js?');
+      console.log('HINT: Did you replace PASTE_YOUR_REAL_PASSWORD_HERE with your actual password?');
       console.log('HINT: Did you whitelist IP 0.0.0.0/0 in MongoDB Atlas?');
   });
 
@@ -138,6 +140,19 @@ app.post('/api/v1/profile', async (req, res) => {
     }
 });
 
+// Guardian Device Registration
+app.post('/api/v1/profile/device', async (req, res) => {
+    try {
+        const { phoneNumber, deviceName, deviceModel, imei } = req.body;
+        const user = await User.findOne({ phoneNumber });
+        if(!user) return res.status(404).json({ success: false });
+
+        user.device = { name: deviceName, imei: imei };
+        await user.save();
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false }); }
+});
+
 /* --- REPORTS (Public App) --- */
 app.post('/api/v1/reports', async (req, res) => {
     try {
@@ -171,6 +186,34 @@ app.get('/api/v1/lookup/call/:number', async (req, res) => {
     } catch (err) { res.status(500).json({ status: 'error' }); }
 });
 
+/* --- LOOKUP (SMS) --- */
+app.get('/api/v1/lookup/sms/:number', async (req, res) => {
+    try {
+        const { number } = req.params;
+        // Simple logic for SMS: If many reports -> Danger
+        const spamCount = await SpamReport.countDocuments({ number: number });
+        if(spamCount > 2) return res.json({ status: 'danger', count: spamCount });
+        
+        const dirMatch = await DirectoryEntry.findOne({ phoneNumber: number });
+        if(dirMatch) return res.json({ status: 'verified', name: dirMatch.companyName });
+
+        res.json({ status: 'info' });
+    } catch (err) { res.status(500).json({ status: 'error' }); }
+});
+
+/* --- DIRECTORY LIST --- */
+app.get('/api/v1/lookup/directory', async (req, res) => {
+    try {
+        const { search, category } = req.query;
+        let query = {};
+        if (category && category !== 'All') query.category = category;
+        if (search) query.companyName = { $regex: search, $options: 'i' };
+
+        const results = await DirectoryEntry.find(query).limit(50);
+        res.json(results);
+    } catch (err) { res.status(500).json([]); }
+});
+
 /* --- OWNER DASHBOARD --- */
 app.post('/api/v1/owner/login', (req, res) => {
     const { username, password } = req.body;
@@ -182,24 +225,28 @@ app.post('/api/v1/owner/login', (req, res) => {
 });
 
 app.get('/api/v1/owner/stats', async (req, res) => {
-    // Mock stats for MVP
-    res.json({
-        totalMonthlyRevenue: 50000,
-        totalEnterprises: await Enterprise.countDocuments(),
-        totalB2CSubscribers: await User.countDocuments()
-    });
+    try {
+        // Mock revenue logic
+        res.json({
+            totalMonthlyRevenue: 50000, 
+            totalEnterprises: await Enterprise.countDocuments(),
+            totalB2CSubscribers: await User.countDocuments()
+        });
+    } catch(err) { res.status(500).json({}); }
 });
 
 app.get('/api/v1/owner/fraud-reports', async (req, res) => {
-    const reports = await SpamReport.find().sort({ createdAt: -1 }).limit(20);
-    const formatted = reports.map(r => ({
-        number: r.number,
-        reason: r.reason,
-        comments: r.comments,
-        status: r.status,
-        createdAt: r.createdAt
-    }));
-    res.json(formatted);
+    try {
+        const reports = await SpamReport.find().sort({ createdAt: -1 }).limit(20);
+        const formatted = reports.map(r => ({
+            number: r.number,
+            reason: r.reason,
+            comments: r.comments,
+            status: r.status,
+            createdAt: r.createdAt
+        }));
+        res.json(formatted);
+    } catch(err) { res.status(500).json([]); }
 });
 
 app.post('/api/v1/owner/suspend-number', async (req, res) => {
