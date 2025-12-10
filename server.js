@@ -16,7 +16,7 @@ app.use(express.json());
 // 1. DATABASE CONNECTION
 // ==========================================
 // ⚠️ REPLACE THE PASSWORD BELOW. DO NOT KEEP THE < > SYMBOLS.
-const MONGO_URI = "mongodb+srv://amenuil19_db_user:YOUR_REAL_PASSWORD_HERE@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority";
+const MONGO_URI = "mongodb+srv://amenuil19_db_user:@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority";
 
 console.log("⏳ Connecting to MongoDB...");
 
