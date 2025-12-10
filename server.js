@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS MASTER SERVER (Final Production Version)
+   VBCS MASTER SERVER (Production Ready + Password Fix)
    ================================================== */
 
 require('dotenv').config();
@@ -17,7 +17,7 @@ app.use(express.json());
 // ==========================================
 
 // ✅ CORRECT PASSWORD INSERTED
-const MONGO_URI = "mongodb+srv://sami_dbuser:SAMI!ame11@vbcs-project.7far1jp.mongodb.net/?appName=VBCS-Project;
+const MONGO_URI = "mongodb+srv://amenuil19_db_user:SAMI!ame11@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
 
 console.log("⏳ Connecting to MongoDB...");
 
@@ -82,52 +82,27 @@ const Enterprise = mongoose.model('Enterprise', enterpriseSchema);
 
 /* --- AUTHENTICATION --- */
 
-// 1. Request OTP (DEBUG VERSION)
+// 1. Request OTP
 app.post('/api/v1/auth/request-code', async (req, res) => {
     try {
         const { phoneNumber } = req.body;
-        console.log("1. Received Request for:", phoneNumber);
-
         if (!phoneNumber) return res.status(400).json({ success: false, message: "Phone required" });
-
-        // Test DB Connection State
-        // 0 = disconnected, 1 = connected, 2 = connecting
-        if (mongoose.connection.readyState !== 1) {
-            console.log("❌ DB NOT CONNECTED. State:", mongoose.connection.readyState);
-            return res.status(500).json({ 
-                success: false, 
-                message: "DB Disconnected. Check Render Logs." 
-            });
-        }
 
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         
-        console.log("2. Searching for user...");
         let user = await User.findOne({ phoneNumber });
-        
         if (!user) {
-            console.log("3. Creating NEW user...");
             user = new User({ phoneNumber });
-        } else {
-            console.log("3. Found EXISTING user...");
         }
-        
         user.otp = otp;
         user.otpExpires = new Date(Date.now() + 10 * 60000); 
-        
-        console.log("4. Saving to DB...");
         await user.save();
 
-        console.log(`✅ Success! OTP: ${otp}`);
+        console.log(`🔐 OTP for ${phoneNumber}: ${otp}`);
         res.json({ success: true, message: "Code sent", testCode: otp });
-
     } catch (err) {
-        console.error("🔥 CRITICAL ERROR:", err);
-        // SEND THE REAL ERROR TO THE FRONTEND
-        res.status(500).json({ 
-            success: false, 
-            message: "DB Error: " + err.message 
-        });
+        console.error(err);
+        res.status(500).json({ success: false, message: "Server Error" });
     }
 });
 
@@ -171,7 +146,7 @@ app.post('/api/v1/auth/login-password', async (req, res) => {
     }
 });
 
-// 4. Save Profile (With Password Saving Fix)
+// 4. Save Profile (CRITICAL FIX: SAVE PASSWORD)
 app.post('/api/v1/profile', async (req, res) => {
     try {
         const { phoneNumber, fullName, email, age, password } = req.body;
@@ -179,7 +154,7 @@ app.post('/api/v1/profile', async (req, res) => {
         // Build update object
         const updateData = { fullName, email, age, profileComplete: true };
         
-        // ✅ CRITICAL FIX: Save the password if provided
+        // ✅ BUG FIX: Actually save the password to the database
         if (password && password.length > 0) {
             updateData.password = password; 
         }
