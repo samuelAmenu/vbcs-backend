@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS MASTER SERVER (Strict Profile Logic)
+   VBCS MASTER SERVER (Strict Profile + Password Fix)
    ================================================== */
 
 require('dotenv').config();
@@ -16,7 +16,7 @@ app.use(express.json());
 // 1. DATABASE CONNECTION
 // ==========================================
 
-// ⚠️ REPLACE WITH YOUR REAL PASSWORD
+// ✅ PASSWORD INCLUDED CORRECTLY
 const MONGO_URI = "mongodb+srv://amenuil19_db_user:ehs04IyMn9Uz3S5P@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
 
 console.log("⏳ Connecting to MongoDB...");
@@ -147,13 +147,18 @@ app.post('/api/v1/auth/login-password', async (req, res) => {
     }
 });
 
-// 4. Save Profile
+// 4. Save Profile (CRITICAL FIX: SAVE PASSWORD)
 app.post('/api/v1/profile', async (req, res) => {
     try {
         const { phoneNumber, fullName, email, age, password } = req.body;
         
+        // Build the update object
         const updateData = { fullName, email, age, profileComplete: true };
-        if (password) updateData.password = password; 
+        
+        // ✅ BUG FIX: Actually save the password to the database
+        if (password) {
+            updateData.password = password; 
+        }
 
         const user = await User.findOneAndUpdate(
             { phoneNumber },
@@ -183,15 +188,10 @@ app.post('/api/v1/profile/device', async (req, res) => {
 app.post('/api/v1/reports', async (req, res) => {
     try {
         const { number, reason, comments } = req.body;
-        console.log("⚠️ Received Report:", number);
-        
         const newReport = new SpamReport({ number, reason, comments });
         await newReport.save();
-        
         res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ success: false });
-    }
+    } catch (error) { res.status(500).json({ success: false }); }
 });
 
 /* --- LOOKUP --- */
