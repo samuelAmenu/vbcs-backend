@@ -1,89 +1,74 @@
 /* ==================================================
-   VBCS MASTER SERVER (Production Ready + Password Fix)
+   VBCS SERVER V4.0 (Standard Onboarding Flow)
    ================================================== */
 
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const crypto = require('crypto'); // Native Node security module
 const app = express();
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// ==========================================
-// 1. DATABASE CONNECTION
-// ==========================================
-
-// ✅ CORRECT PASSWORD INSERTED
+// ⚠️ DATABASE CONNECTION
 const MONGO_URI = "mongodb+srv://sami_dbuser:SAMI!ame11@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
 
 console.log("⏳ Connecting to MongoDB...");
-
 mongoose.connect(MONGO_URI)
-  .then(() => console.log('✅ MongoDB Connected Successfully'))
-  .catch(err => {
-      console.error('❌ DB Connection Error:', err.message);
-      console.log('HINT: Check Network Access in MongoDB Atlas (Whitelist 0.0.0.0/0)');
-  });
+  .then(() => console.log('✅ MongoDB Connected'))
+  .catch(err => console.error('❌ DB Error:', err.message));
 
-// ==========================================
-// 2. DATABASE SCHEMAS
-// ==========================================
-
-// User Schema (Includes Password)
+// --- 1. ROBUST USER SCHEMA ---
 const userSchema = new mongoose.Schema({
+    // Primary ID
     phoneNumber: { type: String, required: true, unique: true },
-    password: { type: String }, // Stores user password
-    fullName: String,
-    email: String,
-    age: Number,
+    
+    // Auth Data
     otp: String,
     otpExpires: Date,
-    profileComplete: { type: Boolean, default: false },
-    device: { name: String, imei: String },
+    passwordHash: String, // Hashed password
+    salt: String,         // Security salt
+    
+    // Step 5: Personal Profile
+    fullName: String,
+    email: String,
+    dob: String,
+    gender: String,
+    
+    // Step 6: Device Profile
+    device: {
+        name: String,
+        type: String, // Android/iOS
+        model: String,
+        imei: String
+    },
+    
+    // Status Flags
+    // 1=OTP Verified, 2=Personal Done, 3=Device Done, 4=Complete
+    onboardingStep: { type: Number, default: 0 }, 
     createdAt: { type: Date, default: Date.now }
 });
+
+// Helper: Password Hashing
+userSchema.methods.setPassword = function(password) {
+    this.salt = crypto.randomBytes(16).toString('hex');
+    this.passwordHash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
+};
+
+userSchema.methods.validatePassword = function(password) {
+    if (!this.passwordHash || !this.salt) return false;
+    const hash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
+    return this.passwordHash === hash;
+};
+
 const User = mongoose.model('User', userSchema);
 
-// Report Schema
-const reportSchema = new mongoose.Schema({
-    number: String,
-    reason: String,
-    comments: String,
-    status: { type: String, default: 'Pending' },
-    createdAt: { type: Date, default: Date.now }
-});
-const SpamReport = mongoose.model('SpamReport', reportSchema);
+// --- 2. API ROUTES (THE 8-STEP FLOW) ---
 
-// Directory Schema
-const directorySchema = new mongoose.Schema({
-    phoneNumber: String,
-    companyName: String,
-    category: String,
-    status: { type: String, default: 'Verified' }
-});
-const DirectoryEntry = mongoose.model('DirectoryEntry', directorySchema);
-
-// Enterprise Schema
-const enterpriseSchema = new mongoose.Schema({
-    companyName: String,
-    monthlyBill: Number,
-    status: { type: String, default: 'Active' },
-    tier: String
-});
-const Enterprise = mongoose.model('Enterprise', enterpriseSchema);
-
-
-// ==========================================
-// 3. API ROUTES
-// ==========================================
-
-/* --- AUTHENTICATION --- */
-
-// 1. Request OTP
-app.post('/api/v1/auth/request-code', async (req, res) => {
+// Step 3: OTP Generation
+app.post('/api/v4/auth/otp-request', async (req, res) => {
     try {
         const { phoneNumber } = req.body;
         if (!phoneNumber) return res.status(400).json({ success: false, message: "Phone required" });
@@ -92,198 +77,112 @@ app.post('/api/v1/auth/request-code', async (req, res) => {
         
         let user = await User.findOne({ phoneNumber });
         if (!user) {
-            user = new User({ phoneNumber });
+            user = new User({ phoneNumber }); // Step 1: Init User
         }
+        
         user.otp = otp;
-        user.otpExpires = new Date(Date.now() + 10 * 60000); 
+        user.otpExpires = new Date(Date.now() + 5 * 60000); // 5 mins
         await user.save();
 
         console.log(`🔐 OTP for ${phoneNumber}: ${otp}`);
-        res.json({ success: true, message: "Code sent", testCode: otp });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ success: false, message: "Server Error" });
-    }
+        res.json({ success: true, message: "OTP Sent", testCode: otp });
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-// 2. Verify OTP (With Strict Profile Check)
-app.post('/api/v1/auth/verify-code', async (req, res) => {
+// Step 4: OTP Verification & Routing
+app.post('/api/v4/auth/otp-verify', async (req, res) => {
     try {
         const { phoneNumber, code } = req.body;
         const user = await User.findOne({ phoneNumber });
 
         if (!user) return res.status(400).json({ success: false, message: "User not found" });
-        if (user.otp !== code) return res.status(400).json({ success: false, message: "Invalid Code" });
+        if (user.otp !== code) return res.status(400).json({ success: false, message: "Invalid OTP" });
 
+        // OTP is correct. Clear it.
         user.otp = null;
-        await user.save();
         
-        // STRICT CHECK: Force Wizard if Name or Password is missing
-        const isIncomplete = !user.profileComplete || !user.fullName || !user.password;
-
-        res.json({ success: true, user: user, isNewUser: isIncomplete });
-    } catch (err) {
-        res.status(500).json({ success: false });
-    }
+        // Determine Next Step Logic
+        let nextStep = 'home';
+        
+        // If profile isn't totally complete, find where they left off
+        if (user.onboardingStep < 4) {
+            if (!user.fullName) nextStep = 'personal';       // Step 5 needed
+            else if (!user.device || !user.device.name) nextStep = 'device'; // Step 6 needed
+            else if (!user.passwordHash) nextStep = 'password'; // Step 7 needed
+        }
+        
+        await user.save();
+        res.json({ success: true, nextStep: nextStep, user });
+    } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// 3. Password Login
-app.post('/api/v1/auth/login-password', async (req, res) => {
+// Step 5: Personal Profile Save
+app.post('/api/v4/onboarding/personal', async (req, res) => {
+    try {
+        const { phoneNumber, fullName, email, dob } = req.body;
+        const user = await User.findOne({ phoneNumber });
+        if(!user) return res.status(404).json({success: false});
+
+        user.fullName = fullName;
+        user.email = email;
+        user.dob = dob;
+        user.onboardingStep = 2; // Marked Personal as Done
+        await user.save();
+
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// Step 6: Device Profile Save
+app.post('/api/v4/onboarding/device', async (req, res) => {
+    try {
+        const { phoneNumber, deviceName, type, imei } = req.body;
+        const user = await User.findOne({ phoneNumber });
+        if(!user) return res.status(404).json({success: false});
+
+        user.device = { name: deviceName, type, imei };
+        user.onboardingStep = 3; // Marked Device as Done
+        await user.save();
+
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// Step 7: Password Creation
+app.post('/api/v4/onboarding/password', async (req, res) => {
+    try {
+        const { phoneNumber, password } = req.body;
+        const user = await User.findOne({ phoneNumber });
+        if(!user) return res.status(404).json({success: false});
+
+        user.setPassword(password); // Secure Hash
+        user.onboardingStep = 4;    // Fully Complete
+        await user.save();
+
+        res.json({ success: true, user });
+    } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// Login via Password (For returning users)
+app.post('/api/v4/auth/login', async (req, res) => {
     try {
         const { phoneNumber, password } = req.body;
         const user = await User.findOne({ phoneNumber });
 
         if (!user) return res.status(400).json({ success: false, message: "User not found" });
         
-        // Check password
-        if (user.password !== password) {
-            return res.status(400).json({ success: false, message: "Incorrect Password" });
+        // Use the secure validation method
+        if (!user.validatePassword(password)) {
+            return res.status(400).json({ success: false, message: "Wrong Password" });
         }
 
-        res.json({ success: true, user: user });
-    } catch (err) {
-        res.status(500).json({ success: false, message: "Login Error" });
-    }
-});
-
-// 4. Save Profile (CRITICAL FIX: SAVE PASSWORD)
-app.post('/api/v1/profile', async (req, res) => {
-    try {
-        const { phoneNumber, fullName, email, age, password } = req.body;
-        
-        // Build update object
-        const updateData = { fullName, email, age, profileComplete: true };
-        
-        // ✅ BUG FIX: Actually save the password to the database
-        if (password && password.length > 0) {
-            updateData.password = password; 
-        }
-
-        const user = await User.findOneAndUpdate(
-            { phoneNumber },
-            updateData,
-            { new: true }
-        );
         res.json({ success: true, user });
-    } catch (err) {
-        console.error("Profile Save Error:", err);
-        res.status(500).json({ success: false });
-    }
-});
-
-// 5. Device Registration
-app.post('/api/v1/profile/device', async (req, res) => {
-    try {
-        const { phoneNumber, deviceName, imei } = req.body;
-        const user = await User.findOne({ phoneNumber });
-        if(!user) return res.status(404).json({ success: false });
-
-        user.device = { name: deviceName, imei: imei };
-        await user.save();
-        res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false }); }
 });
 
-/* --- REPORTS --- */
-app.post('/api/v1/reports', async (req, res) => {
-    try {
-        const { number, reason, comments } = req.body;
-        console.log("⚠️ Received Report:", number);
-        
-        const newReport = new SpamReport({ number, reason, comments });
-        await newReport.save();
-        
-        res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ success: false });
-    }
-});
+// Mock Lookups (For Home Page features)
+app.get('/api/v1/lookup/call/:number', (req, res) => res.json({ status: 'unverified' }));
+app.get('/api/v1/lookup/directory', (req, res) => res.json([]));
 
-/* --- LOOKUP --- */
-app.get('/api/v1/lookup/call/:number', async (req, res) => {
-    try {
-        const { number } = req.params;
-        
-        const dirMatch = await DirectoryEntry.findOne({ phoneNumber: number });
-        if(dirMatch) return res.json({ status: 'verified', name: dirMatch.companyName });
-
-        const spamCount = await SpamReport.countDocuments({ number: number });
-        if(spamCount > 0) return res.json({ status: 'warning', count: spamCount });
-
-        res.json({ status: 'unverified' });
-    } catch (err) { res.status(500).json({ status: 'error' }); }
-});
-
-app.get('/api/v1/lookup/sms/:number', async (req, res) => {
-    try {
-        const { number } = req.params;
-        const spamCount = await SpamReport.countDocuments({ number: number });
-        if(spamCount > 2) return res.json({ status: 'danger', count: spamCount });
-        
-        const dirMatch = await DirectoryEntry.findOne({ phoneNumber: number });
-        if(dirMatch) return res.json({ status: 'verified', name: dirMatch.companyName });
-
-        res.json({ status: 'info' });
-    } catch (err) { res.status(500).json({ status: 'error' }); }
-});
-
-app.get('/api/v1/lookup/directory', async (req, res) => {
-    try {
-        const { search, category } = req.query;
-        let query = {};
-        if (category && category !== 'All') query.category = category;
-        if (search) query.companyName = { $regex: search, $options: 'i' };
-
-        const results = await DirectoryEntry.find(query).limit(50);
-        res.json(results);
-    } catch (err) { res.status(500).json([]); }
-});
-
-/* --- OWNER DASHBOARD --- */
-app.post('/api/v1/owner/login', (req, res) => {
-    const { username, password } = req.body;
-    if(username === 'owner' && password === 'admin123') {
-        res.json({ success: true });
-    } else {
-        res.json({ success: false, message: "Invalid credentials" });
-    }
-});
-
-app.get('/api/v1/owner/stats', async (req, res) => {
-    try {
-        res.json({
-            totalMonthlyRevenue: 50000, 
-            totalEnterprises: await Enterprise.countDocuments(),
-            totalB2CSubscribers: await User.countDocuments()
-        });
-    } catch(err) { res.status(500).json({}); }
-});
-
-app.get('/api/v1/owner/fraud-reports', async (req, res) => {
-    try {
-        const reports = await SpamReport.find().sort({ createdAt: -1 }).limit(20);
-        const formatted = reports.map(r => ({
-            number: r.number,
-            reason: r.reason,
-            comments: r.comments,
-            status: r.status,
-            createdAt: r.createdAt
-        }));
-        res.json(formatted);
-    } catch(err) { res.status(500).json([]); }
-});
-
-app.post('/api/v1/owner/suspend-number', async (req, res) => {
-    try {
-        await SpamReport.updateMany({ number: req.body.number }, { status: 'Suspended' });
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ success: false }); }
-});
-
-// ==========================================
-// 4. START SERVER
-// ==========================================
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () => { console.log(`🚀 V4.0 Server running on port ${PORT}`); });
