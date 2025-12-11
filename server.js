@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS SERVER V5.1 (Fixed Device Schema)
+   VBCS SERVER V5.2 (UI Restoration + Extended Profile)
    ================================================== */
 
 require('dotenv').config();
@@ -12,7 +12,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ⚠️ DATABASE CONNECTION
+// ✅ DATABASE CONNECTION
 const MONGO_URI = "mongodb+srv://sami_dbuser:SAMI!ame11@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
 
 console.log("⏳ Connecting to MongoDB...");
@@ -23,16 +23,19 @@ mongoose.connect(MONGO_URI)
       console.log("HINT: Ensure IP Whitelist is 0.0.0.0/0");
   });
 
-// --- 1. USER SCHEMA (Explicit Object Definition) ---
+// --- 1. USER SCHEMA (Extended) ---
 const userSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true, unique: true },
     passwordHash: String,
     salt: String,
+    
+    // Extended Profile
     fullName: String,
     email: String,
+    age: Number,            // ✅ Added
+    secondaryPhone: String, // ✅ Added
     dob: String,
     
-    // ✅ FIXED: Explicitly defined as a nested object
     device: { 
         name: { type: String, default: '' },
         imei: { type: String, default: '' },
@@ -58,7 +61,7 @@ const userSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-// Password Logic
+// Password Logic (UNCHANGED)
 userSchema.methods.setPassword = function(password) {
     this.salt = crypto.randomBytes(16).toString('hex');
     this.passwordHash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
@@ -71,7 +74,7 @@ userSchema.methods.validatePassword = function(password) {
 
 const User = mongoose.model('User', userSchema);
 
-// Schemas for Features
+// Schemas
 const reportSchema = new mongoose.Schema({
     number: String, reason: String, comments: String, status: { type: String, default: 'Pending' }, createdAt: { type: Date, default: Date.now }
 });
@@ -82,14 +85,9 @@ const directorySchema = new mongoose.Schema({
 });
 const DirectoryEntry = mongoose.model('DirectoryEntry', directorySchema);
 
-const enterpriseSchema = new mongoose.Schema({
-    companyName: String, monthlyBill: Number, status: { type: String, default: 'Active' }, tier: String
-});
-const Enterprise = mongoose.model('Enterprise', enterpriseSchema);
+// --- 2. ROUTES ---
 
-
-// --- 2. AUTH ROUTES ---
-
+// Auth (UNCHANGED - KEEPS LOGIN WORKING)
 app.post('/api/v4/auth/otp-request', async (req, res) => {
     try {
         const { phoneNumber } = req.body;
@@ -133,38 +131,23 @@ app.post('/api/v4/auth/login', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- 3. ONBOARDING ROUTES (FIXED) ---
-
+// Onboarding (UPDATED FOR NEW FIELDS)
 app.post('/api/v4/onboarding/personal', async (req, res) => {
     try {
-        const { phoneNumber, fullName, email, dob } = req.body;
-        await User.findOneAndUpdate({ phoneNumber }, { fullName, email, dob, onboardingStep: 2 });
+        // ✅ Added Age and Secondary Phone
+        const { phoneNumber, fullName, email, age, secondaryPhone } = req.body;
+        await User.findOneAndUpdate({ phoneNumber }, { fullName, email, age, secondaryPhone, onboardingStep: 2 });
         res.json({ success: true });
-    } catch(err) { res.status(500).json({ success: false, message: err.message }); }
+    } catch(err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ FIXED DEVICE ROUTE
 app.post('/api/v4/onboarding/device', async (req, res) => {
     try {
         const { phoneNumber, deviceName, imei } = req.body;
-        
-        // Explicitly map the fields to match the Schema
-        const deviceData = {
-            name: deviceName,
-            imei: imei,
-            type: 'Mobile'
-        };
-
-        await User.findOneAndUpdate(
-            { phoneNumber }, 
-            { device: deviceData, onboardingStep: 3 },
-            { new: true, runValidators: true }
-        );
+        const deviceData = { name: deviceName, imei: imei, type: 'Mobile' };
+        await User.findOneAndUpdate({ phoneNumber }, { device: deviceData, onboardingStep: 3 }, { new: true });
         res.json({ success: true });
-    } catch(err) { 
-        console.error("Device Save Error:", err);
-        res.status(500).json({ success: false, message: err.message }); 
-    }
+    } catch(err) { res.status(500).json({ success: false }); }
 });
 
 app.post('/api/v4/onboarding/password', async (req, res) => {
@@ -178,7 +161,7 @@ app.post('/api/v4/onboarding/password', async (req, res) => {
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
-// --- 4. GUARDIAN ROUTES ---
+// Features (Guardian, etc)
 app.post('/api/v4/guardian/location', async (req, res) => {
     const { phoneNumber, lat, lng } = req.body;
     await User.findOneAndUpdate({ phoneNumber }, { location: { lat, lng, updatedAt: new Date() } });
@@ -190,12 +173,9 @@ app.post('/api/v4/guardian/invite', async (req, res) => {
         const { myPhone, targetPhone, name } = req.body;
         const me = await User.findOne({ phoneNumber: myPhone });
         const target = await User.findOne({ phoneNumber: targetPhone });
-
         if (!target) return res.status(404).json({ success: false, message: "User not found" });
-
         me.circle.push({ phone: targetPhone, name: name, status: 'pending' });
         target.invites.push({ fromName: me.fullName, fromPhone: me.phoneNumber });
-        
         await me.save();
         await target.save();
         res.json({ success: true });
@@ -207,41 +187,44 @@ app.get('/api/v4/guardian/circle', async (req, res) => {
         const { phone } = req.query;
         const me = await User.findOne({ phoneNumber: phone });
         if(!me) return res.json({ success: true, circle: [], invites: [] });
-
         const mapData = [];
         for (let member of me.circle) {
             const u = await User.findOne({ phoneNumber: member.phone });
-            if (u && u.location) {
-                mapData.push({ 
-                    name: member.name, 
-                    phone: member.phone, 
-                    lat: u.location.lat, 
-                    lng: u.location.lng 
-                });
-            }
+            if (u && u.location) mapData.push({ name: member.name, phone: member.phone, lat: u.location.lat, lng: u.location.lng });
         }
         res.json({ success: true, circle: mapData, invites: me.invites });
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
-// --- 5. UTILS ---
-app.get('/api/v1/lookup/call/:number', (req, res) => res.json({ status: 'verified', name: "Safe Caller" }));
-app.get('/api/v1/lookup/directory', (req, res) => res.json([
-    { companyName: "Ethio Telecom", phoneNumber: "994", category: "Government" },
-    { companyName: "CBE", phoneNumber: "951", category: "Bank" }
-]));
-
-// Owner
-app.post('/api/v1/owner/login', (req, res) => {
-    const { username, password } = req.body;
-    if(username === 'owner' && password === 'admin123') res.json({ success: true });
-    else res.json({ success: false, message: "Invalid credentials" });
+app.get('/api/v1/lookup/call/:number', async (req, res) => {
+    try {
+        const { number } = req.params;
+        const dirMatch = await DirectoryEntry.findOne({ phoneNumber: number });
+        if(dirMatch) return res.json({ status: 'verified', name: dirMatch.companyName });
+        const spamCount = await SpamReport.countDocuments({ number: number });
+        if(spamCount > 0) return res.json({ status: 'warning', count: spamCount });
+        res.json({ status: 'unverified' });
+    } catch (err) { res.status(500).json({ status: 'error' }); }
 });
 
-app.get('/api/v1/owner/stats', async (req, res) => {
+// Directory Route
+app.get('/api/v1/lookup/directory', async (req, res) => {
     try {
-        res.json({ totalRevenue: 50000, users: await User.countDocuments() });
-    } catch(err) { res.status(500).json({}); }
+        const { category } = req.query;
+        let query = {};
+        if (category && category !== 'All') query.category = category;
+        const results = await DirectoryEntry.find(query).limit(50);
+        res.json(results);
+    } catch (err) { res.status(500).json([]); }
+});
+
+app.post('/api/v1/reports', async (req, res) => {
+    try {
+        const { number, reason, comments } = req.body;
+        const newReport = new SpamReport({ number, reason, comments });
+        await newReport.save();
+        res.json({ success: true });
+    } catch (error) { res.status(500).json({ success: false }); }
 });
 
 const PORT = process.env.PORT || 10000;
