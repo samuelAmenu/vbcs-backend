@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS SERVER V6.2 (Fail-Safe Admin & Guardian)
+   VBCS SERVER V6.3 (Final Stable Build)
    ================================================== */
 
 require('dotenv').config();
@@ -24,6 +24,8 @@ mongoose.connect(MONGO_URI)
   });
 
 // --- 1. SCHEMAS ---
+
+// User Schema (Fixed Device Object)
 const userSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true, unique: true },
     passwordHash: String,
@@ -33,6 +35,7 @@ const userSchema = new mongoose.Schema({
     age: Number,
     secondaryPhone: String,
     dob: String,
+    // ✅ Device is strictly an Object now
     device: { 
         name: { type: String, default: '' }, 
         imei: { type: String, default: '' }, 
@@ -67,20 +70,25 @@ const DirectoryEntry = mongoose.model('DirectoryEntry', new mongoose.Schema({
     phoneNumber: String, companyName: String, category: String, status: { type: String, default: 'Verified' }
 }));
 
-// --- 2. CORE AUTH ROUTES (V6) ---
+// --- 2. AUTH ROUTES ---
 
 app.post('/api/v6/auth/otp-request', async (req, res) => {
     try {
         const { phoneNumber } = req.body;
-        if (!phoneNumber) return res.status(400).json({ success: false });
+        if (!phoneNumber) return res.status(400).json({ success: false, message: "Phone required" });
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        
         let user = await User.findOne({ phoneNumber });
         if (!user) user = new User({ phoneNumber });
+        
         user.otp = otp;
         user.otpExpires = new Date(Date.now() + 5 * 60000);
         await user.save();
         res.json({ success: true, testCode: otp });
-    } catch (err) { res.status(500).json({ success: false }); }
+    } catch (err) { 
+        console.error("OTP Error:", err);
+        res.status(500).json({ success: false, message: err.message }); 
+    }
 });
 
 app.post('/api/v6/auth/otp-verify', async (req, res) => {
@@ -88,6 +96,7 @@ app.post('/api/v6/auth/otp-verify', async (req, res) => {
         const { phoneNumber, code } = req.body;
         const user = await User.findOne({ phoneNumber });
         if (!user || user.otp !== code) return res.status(400).json({ success: false, message: "Invalid OTP" });
+        
         user.otp = null;
         let nextStep = 'home';
         if (user.onboardingStep < 4) {
@@ -97,7 +106,7 @@ app.post('/api/v6/auth/otp-verify', async (req, res) => {
         }
         await user.save();
         res.json({ success: true, nextStep, user });
-    } catch (err) { res.status(500).json({ success: false }); }
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
 app.post('/api/v6/auth/login', async (req, res) => {
@@ -106,25 +115,35 @@ app.post('/api/v6/auth/login', async (req, res) => {
         const user = await User.findOne({ phoneNumber });
         if (!user || !user.validatePassword(password)) return res.status(400).json({ success: false, message: "Invalid Credentials" });
         res.json({ success: true, user });
-    } catch (err) { res.status(500).json({ success: false }); }
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
 // --- 3. ONBOARDING ROUTES ---
 app.post('/api/v6/onboarding/personal', async (req, res) => {
-    await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { ...req.body, onboardingStep: 2 });
-    res.json({ success: true });
+    try {
+        await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { ...req.body, onboardingStep: 2 });
+        res.json({ success: true });
+    } catch(err) { res.status(500).json({ success: false, message: err.message }); }
 });
+
 app.post('/api/v6/onboarding/device', async (req, res) => {
-    const { phoneNumber, deviceName, imei } = req.body;
-    await User.findOneAndUpdate({ phoneNumber }, { device: { name: deviceName, imei, type: 'Mobile' }, onboardingStep: 3 });
-    res.json({ success: true });
+    try {
+        const { phoneNumber, deviceName, imei } = req.body;
+        // Strict object mapping
+        const deviceData = { name: deviceName, imei: imei, type: 'Mobile' };
+        await User.findOneAndUpdate({ phoneNumber }, { device: deviceData, onboardingStep: 3 });
+        res.json({ success: true });
+    } catch(err) { res.status(500).json({ success: false, message: err.message }); }
 });
+
 app.post('/api/v6/onboarding/password', async (req, res) => {
-    const user = await User.findOne({ phoneNumber: req.body.phoneNumber });
-    user.setPassword(req.body.password);
-    user.onboardingStep = 4;
-    await user.save();
-    res.json({ success: true, user });
+    try {
+        const user = await User.findOne({ phoneNumber: req.body.phoneNumber });
+        user.setPassword(req.body.password);
+        user.onboardingStep = 4;
+        await user.save();
+        res.json({ success: true, user });
+    } catch(err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
 // --- 4. GUARDIAN & FEATURES ---
@@ -204,49 +223,48 @@ app.get('/api/v6/guardian/circle', async (req, res) => {
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
-// --- 5. OWNER DASHBOARD ROUTES (V6 + V1 COMPATIBILITY) ---
+// --- 5. OWNER DASHBOARD ROUTES (V6) ---
 
-// Handler function for both V1 and V6
 const ownerLoginHandler = (req, res) => {
     const { username, password } = req.body;
     if(username === 'owner' && password === 'admin123') res.json({ success: true });
     else res.status(401).json({ success: false, message: "Invalid credentials" });
 };
 
-const ownerStatsHandler = async (req, res) => {
-    try {
-        res.json({
-            totalRevenue: 50000, 
-            users: await User.countDocuments()
-        });
-    } catch(err) { res.status(500).json({}); }
-};
-
-const ownerReportsHandler = async (req, res) => {
-    try {
-        const reports = await SpamReport.find().sort({ createdAt: -1 }).limit(20);
-        res.json(reports);
-    } catch(err) { res.status(500).json([]); }
-};
-
-const ownerSuspendHandler = async (req, res) => {
-    try {
-        await SpamReport.updateMany({ number: req.body.number }, { status: 'Suspended' });
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ success: false }); }
-};
-
-// ✅ V6 Routes
+// V6 Routes
 app.post('/api/v6/owner/login', ownerLoginHandler);
-app.get('/api/v6/owner/stats', ownerStatsHandler);
-app.get('/api/v6/owner/fraud-reports', ownerReportsHandler);
-app.post('/api/v6/owner/suspend-number', ownerSuspendHandler);
+app.get('/api/v6/owner/stats', async (req, res) => {
+    try { res.json({ totalRevenue: 50000, users: await User.countDocuments() }); } catch(err) { res.status(500).json({}); }
+});
+app.get('/api/v6/owner/fraud-reports', async (req, res) => {
+    try { res.json(await SpamReport.find().sort({ createdAt: -1 }).limit(20)); } catch(err) { res.status(500).json([]); }
+});
+app.post('/api/v6/owner/suspend-number', async (req, res) => {
+    try { await SpamReport.updateMany({ number: req.body.number }, { status: 'Suspended' }); res.json({ success: true }); } catch (err) { res.status(500).json({ success: false }); }
+});
 
-// ✅ V1 Routes (BACKWARD COMPATIBILITY) - Fixes your 404 error
+// ✅ NEW: DIRECTORY UPLOAD ROUTE
+app.post('/api/v6/owner/directory/add', async (req, res) => {
+    try {
+        const { companyName, phoneNumber, category } = req.body;
+        const entry = new DirectoryEntry({ companyName, phoneNumber, category });
+        await entry.save();
+        res.json({ success: true, message: "Added" });
+    } catch(err) { 
+        console.error("Directory Add Error:", err);
+        res.status(500).json({ success: false, message: err.message }); 
+    }
+});
+
+app.get('/api/v6/owner/directory/list', async (req, res) => {
+    try {
+        const list = await DirectoryEntry.find().sort({ companyName: 1 }).limit(100);
+        res.json(list);
+    } catch(err) { res.status(500).json([]); }
+});
+
+// V1 Backward Compatibility
 app.post('/api/v1/owner/login', ownerLoginHandler);
-app.get('/api/v1/owner/stats', ownerStatsHandler);
-app.get('/api/v1/owner/fraud-reports', ownerReportsHandler);
-app.post('/api/v1/owner/suspend-number', ownerSuspendHandler);
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => { console.log(`🚀 V6.2 Server running on port ${PORT}`); });
+app.listen(PORT, () => { console.log(`🚀 V6.3 Server running on port ${PORT}`); });
