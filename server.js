@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS SERVER V6.1 (Master Build + Admin Panel)
+   VBCS SERVER V6.2 (Fail-Safe Admin & Guardian)
    ================================================== */
 
 require('dotenv').config();
@@ -24,7 +24,6 @@ mongoose.connect(MONGO_URI)
   });
 
 // --- 1. SCHEMAS ---
-
 const userSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true, unique: true },
     passwordHash: String,
@@ -34,7 +33,11 @@ const userSchema = new mongoose.Schema({
     age: Number,
     secondaryPhone: String,
     dob: String,
-    device: { name: { type: String, default: '' }, imei: { type: String, default: '' }, type: { type: String, default: 'Mobile' } },
+    device: { 
+        name: { type: String, default: '' }, 
+        imei: { type: String, default: '' }, 
+        type: { type: String, default: 'Mobile' } 
+    },
     location: { lat: Number, lng: Number, updatedAt: Date },
     circle: [{ phone: String, name: String, status: { type: String, default: 'pending' } }],
     invites: [{ fromName: String, fromPhone: String, date: { type: Date, default: Date.now } }],
@@ -64,7 +67,7 @@ const DirectoryEntry = mongoose.model('DirectoryEntry', new mongoose.Schema({
     phoneNumber: String, companyName: String, category: String, status: { type: String, default: 'Verified' }
 }));
 
-// --- 2. AUTH & ONBOARDING ROUTES (V6) ---
+// --- 2. CORE AUTH ROUTES (V6) ---
 
 app.post('/api/v6/auth/otp-request', async (req, res) => {
     try {
@@ -106,17 +109,16 @@ app.post('/api/v6/auth/login', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false }); }
 });
 
+// --- 3. ONBOARDING ROUTES ---
 app.post('/api/v6/onboarding/personal', async (req, res) => {
     await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { ...req.body, onboardingStep: 2 });
     res.json({ success: true });
 });
-
 app.post('/api/v6/onboarding/device', async (req, res) => {
     const { phoneNumber, deviceName, imei } = req.body;
     await User.findOneAndUpdate({ phoneNumber }, { device: { name: deviceName, imei, type: 'Mobile' }, onboardingStep: 3 });
     res.json({ success: true });
 });
-
 app.post('/api/v6/onboarding/password', async (req, res) => {
     const user = await User.findOne({ phoneNumber: req.body.phoneNumber });
     user.setPassword(req.body.password);
@@ -125,8 +127,7 @@ app.post('/api/v6/onboarding/password', async (req, res) => {
     res.json({ success: true, user });
 });
 
-// --- 3. FEATURES (Caller ID, Directory, Guardian) ---
-
+// --- 4. GUARDIAN & FEATURES ---
 app.get('/api/v6/lookup/call/:number', async (req, res) => {
     try {
         const { number } = req.params;
@@ -168,7 +169,7 @@ app.post('/api/v6/reports', async (req, res) => {
     } catch (error) { res.status(500).json({ success: false }); }
 });
 
-// Guardian
+// Guardian Engine
 app.post('/api/v6/guardian/location', async (req, res) => {
     const { phoneNumber, lat, lng } = req.body;
     await User.findOneAndUpdate({ phoneNumber }, { location: { lat, lng, updatedAt: new Date() } });
@@ -203,43 +204,49 @@ app.get('/api/v6/guardian/circle', async (req, res) => {
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
-// --- 4. OWNER DASHBOARD ROUTES (RESTORED) ---
+// --- 5. OWNER DASHBOARD ROUTES (V6 + V1 COMPATIBILITY) ---
 
-app.post('/api/v6/owner/login', (req, res) => {
+// Handler function for both V1 and V6
+const ownerLoginHandler = (req, res) => {
     const { username, password } = req.body;
     if(username === 'owner' && password === 'admin123') res.json({ success: true });
     else res.status(401).json({ success: false, message: "Invalid credentials" });
-});
+};
 
-app.get('/api/v6/owner/stats', async (req, res) => {
+const ownerStatsHandler = async (req, res) => {
     try {
         res.json({
             totalRevenue: 50000, 
             users: await User.countDocuments()
         });
     } catch(err) { res.status(500).json({}); }
-});
+};
 
-app.get('/api/v6/owner/fraud-reports', async (req, res) => {
+const ownerReportsHandler = async (req, res) => {
     try {
         const reports = await SpamReport.find().sort({ createdAt: -1 }).limit(20);
-        const formatted = reports.map(r => ({
-            number: r.number,
-            reason: r.reason,
-            comments: r.comments,
-            status: r.status,
-            createdAt: r.createdAt
-        }));
-        res.json(formatted);
+        res.json(reports);
     } catch(err) { res.status(500).json([]); }
-});
+};
 
-app.post('/api/v6/owner/suspend-number', async (req, res) => {
+const ownerSuspendHandler = async (req, res) => {
     try {
         await SpamReport.updateMany({ number: req.body.number }, { status: 'Suspended' });
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false }); }
-});
+};
+
+// ✅ V6 Routes
+app.post('/api/v6/owner/login', ownerLoginHandler);
+app.get('/api/v6/owner/stats', ownerStatsHandler);
+app.get('/api/v6/owner/fraud-reports', ownerReportsHandler);
+app.post('/api/v6/owner/suspend-number', ownerSuspendHandler);
+
+// ✅ V1 Routes (BACKWARD COMPATIBILITY) - Fixes your 404 error
+app.post('/api/v1/owner/login', ownerLoginHandler);
+app.get('/api/v1/owner/stats', ownerStatsHandler);
+app.get('/api/v1/owner/fraud-reports', ownerReportsHandler);
+app.post('/api/v1/owner/suspend-number', ownerSuspendHandler);
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => { console.log(`🚀 V6.1 Server running on port ${PORT}`); });
+app.listen(PORT, () => { console.log(`🚀 V6.2 Server running on port ${PORT}`); });
