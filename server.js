@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS SERVER V6.3 (Final Stable Build)
+   VBCS MASTER SERVER V7.0 (Final Release)
    ================================================== */
 
 require('dotenv').config();
@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Support large bulk uploads
 
 // ⚠️ DATABASE CONNECTION
 const MONGO_URI = "mongodb+srv://sami_dbuser:SAMI!ame11@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
@@ -23,27 +23,36 @@ mongoose.connect(MONGO_URI)
       console.log("HINT: Check Network Access in MongoDB Atlas (Whitelist 0.0.0.0/0)");
   });
 
-// --- 1. SCHEMAS ---
+// ==========================================
+// 1. DATABASE SCHEMAS (The Blueprint)
+// ==========================================
 
-// User Schema (Fixed Device Object)
+// User Identity & Guardian Profile
 const userSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true, unique: true },
     passwordHash: String,
     salt: String,
+    
+    // Profile
     fullName: String,
     email: String,
     age: Number,
     secondaryPhone: String,
     dob: String,
-    // ✅ Device is strictly an Object now
+    
+    // Device Fingerprint
     device: { 
         name: { type: String, default: '' }, 
         imei: { type: String, default: '' }, 
         type: { type: String, default: 'Mobile' } 
     },
+    
+    // Guardian Engine Data
     location: { lat: Number, lng: Number, updatedAt: Date },
-    circle: [{ phone: String, name: String, status: { type: String, default: 'pending' } }],
-    invites: [{ fromName: String, fromPhone: String, date: { type: Date, default: Date.now } }],
+    circle: [{ phone: String, name: String, status: { type: String, default: 'pending' } }], // Family
+    invites: [{ fromName: String, fromPhone: String, date: { type: Date, default: Date.now } }], // Incoming requests
+    
+    // Auth State
     otp: String,
     otpExpires: Date,
     onboardingStep: { type: Number, default: 0 },
@@ -62,6 +71,7 @@ userSchema.methods.validatePassword = function(password) {
 
 const User = mongoose.model('User', userSchema);
 
+// Security & Business Data
 const SpamReport = mongoose.model('SpamReport', new mongoose.Schema({
     number: String, reason: String, comments: String, status: { type: String, default: 'Pending' }, createdAt: { type: Date, default: Date.now }
 }));
@@ -70,12 +80,19 @@ const DirectoryEntry = mongoose.model('DirectoryEntry', new mongoose.Schema({
     phoneNumber: String, companyName: String, category: String, status: { type: String, default: 'Verified' }
 }));
 
-// --- 2. AUTH ROUTES ---
+const Enterprise = mongoose.model('Enterprise', new mongoose.Schema({
+    companyName: String, contactPerson: String, phone: String, plan: String, status: { type: String, default: 'Active' }, createdAt: { type: Date, default: Date.now }
+}));
 
+// ==========================================
+// 2. MOBILE APP ROUTES
+// ==========================================
+
+// --- AUTHENTICATION ---
 app.post('/api/v6/auth/otp-request', async (req, res) => {
     try {
         const { phoneNumber } = req.body;
-        if (!phoneNumber) return res.status(400).json({ success: false, message: "Phone required" });
+        if (!phoneNumber) return res.status(400).json({ success: false });
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
         
         let user = await User.findOne({ phoneNumber });
@@ -85,10 +102,7 @@ app.post('/api/v6/auth/otp-request', async (req, res) => {
         user.otpExpires = new Date(Date.now() + 5 * 60000);
         await user.save();
         res.json({ success: true, testCode: otp });
-    } catch (err) { 
-        console.error("OTP Error:", err);
-        res.status(500).json({ success: false, message: err.message }); 
-    }
+    } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.post('/api/v6/auth/otp-verify', async (req, res) => {
@@ -99,6 +113,7 @@ app.post('/api/v6/auth/otp-verify', async (req, res) => {
         
         user.otp = null;
         let nextStep = 'home';
+        // Logic: Force Wizard if profile incomplete
         if (user.onboardingStep < 4) {
             if (!user.fullName) nextStep = 'personal';
             else if (!user.device || !user.device.name) nextStep = 'device';
@@ -106,7 +121,7 @@ app.post('/api/v6/auth/otp-verify', async (req, res) => {
         }
         await user.save();
         res.json({ success: true, nextStep, user });
-    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+    } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.post('/api/v6/auth/login', async (req, res) => {
@@ -115,45 +130,40 @@ app.post('/api/v6/auth/login', async (req, res) => {
         const user = await User.findOne({ phoneNumber });
         if (!user || !user.validatePassword(password)) return res.status(400).json({ success: false, message: "Invalid Credentials" });
         res.json({ success: true, user });
-    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+    } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- 3. ONBOARDING ROUTES ---
+// --- ONBOARDING WIZARD ---
 app.post('/api/v6/onboarding/personal', async (req, res) => {
-    try {
-        await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { ...req.body, onboardingStep: 2 });
-        res.json({ success: true });
-    } catch(err) { res.status(500).json({ success: false, message: err.message }); }
+    await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { ...req.body, onboardingStep: 2 });
+    res.json({ success: true });
 });
 
 app.post('/api/v6/onboarding/device', async (req, res) => {
-    try {
-        const { phoneNumber, deviceName, imei } = req.body;
-        // Strict object mapping
-        const deviceData = { name: deviceName, imei: imei, type: 'Mobile' };
-        await User.findOneAndUpdate({ phoneNumber }, { device: deviceData, onboardingStep: 3 });
-        res.json({ success: true });
-    } catch(err) { res.status(500).json({ success: false, message: err.message }); }
+    const { phoneNumber, deviceName, imei } = req.body;
+    const deviceData = { name: deviceName, imei: imei, type: 'Mobile' };
+    await User.findOneAndUpdate({ phoneNumber }, { device: deviceData, onboardingStep: 3 });
+    res.json({ success: true });
 });
 
 app.post('/api/v6/onboarding/password', async (req, res) => {
-    try {
-        const user = await User.findOne({ phoneNumber: req.body.phoneNumber });
-        user.setPassword(req.body.password);
-        user.onboardingStep = 4;
-        await user.save();
-        res.json({ success: true, user });
-    } catch(err) { res.status(500).json({ success: false, message: err.message }); }
+    const user = await User.findOne({ phoneNumber: req.body.phoneNumber });
+    user.setPassword(req.body.password);
+    user.onboardingStep = 4; // Complete
+    await user.save();
+    res.json({ success: true, user });
 });
 
-// --- 4. GUARDIAN & FEATURES ---
+// --- SECURITY TOOLS (Caller ID / SMS) ---
 app.get('/api/v6/lookup/call/:number', async (req, res) => {
     try {
         const { number } = req.params;
         const dirMatch = await DirectoryEntry.findOne({ phoneNumber: number });
         if(dirMatch) return res.json({ status: 'verified', name: dirMatch.companyName });
+        
         const spamCount = await SpamReport.countDocuments({ number: number });
         if(spamCount > 0) return res.json({ status: 'warning', count: spamCount });
+        
         res.json({ status: 'unverified' });
     } catch (err) { res.status(500).json({ status: 'error' }); }
 });
@@ -161,10 +171,12 @@ app.get('/api/v6/lookup/call/:number', async (req, res) => {
 app.get('/api/v6/lookup/sms/:sender', async (req, res) => {
     try {
         const { sender } = req.params;
-        const dirMatch = await DirectoryEntry.findOne({ phoneNumber: sender });
+        const dirMatch = await DirectoryEntry.findOne({ phoneNumber: sender }); // e.g. "CBE" or "8989"
         if(dirMatch) return res.json({ status: 'verified', name: dirMatch.companyName });
+        
         const spamCount = await SpamReport.countDocuments({ number: sender });
         if(spamCount > 0) return res.json({ status: 'danger', count: spamCount });
+        
         res.json({ status: 'unknown' });
     } catch (err) { res.status(500).json({ status: 'error' }); }
 });
@@ -181,14 +193,13 @@ app.get('/api/v6/lookup/directory', async (req, res) => {
 
 app.post('/api/v6/reports', async (req, res) => {
     try {
-        const { number, reason, comments } = req.body;
-        const newReport = new SpamReport({ number, reason, comments });
+        const newReport = new SpamReport(req.body);
         await newReport.save();
         res.json({ success: true });
     } catch (error) { res.status(500).json({ success: false }); }
 });
 
-// Guardian Engine
+// --- GUARDIAN ENGINE (GPS & Family) ---
 app.post('/api/v6/guardian/location', async (req, res) => {
     const { phoneNumber, lat, lng } = req.body;
     await User.findOneAndUpdate({ phoneNumber }, { location: { lat, lng, updatedAt: new Date() } });
@@ -200,9 +211,12 @@ app.post('/api/v6/guardian/invite', async (req, res) => {
         const { myPhone, targetPhone, name } = req.body;
         const me = await User.findOne({ phoneNumber: myPhone });
         const target = await User.findOne({ phoneNumber: targetPhone });
+
         if (!target) return res.status(404).json({ success: false, message: "User not found" });
+
         me.circle.push({ phone: targetPhone, name: name, status: 'pending' });
         target.invites.push({ fromName: me.fullName, fromPhone: me.phoneNumber });
+        
         await me.save();
         await target.save();
         res.json({ success: true });
@@ -211,60 +225,90 @@ app.post('/api/v6/guardian/invite', async (req, res) => {
 
 app.get('/api/v6/guardian/circle', async (req, res) => {
     try {
-        const { phone } = req.query;
-        const me = await User.findOne({ phoneNumber: phone });
+        const me = await User.findOne({ phoneNumber: req.query.phone });
         if(!me) return res.json({ success: true, circle: [], invites: [] });
+
         const mapData = [];
         for (let member of me.circle) {
             const u = await User.findOne({ phoneNumber: member.phone });
-            if (u && u.location) mapData.push({ name: member.name, phone: member.phone, lat: u.location.lat, lng: u.location.lng });
+            if (u && u.location) {
+                mapData.push({ 
+                    name: member.name, 
+                    phone: member.phone, 
+                    lat: u.location.lat, 
+                    lng: u.location.lng 
+                });
+            }
         }
         res.json({ success: true, circle: mapData, invites: me.invites });
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
-// --- 5. OWNER DASHBOARD ROUTES (V6) ---
+// ==========================================
+// 3. ADMIN / OWNER ROUTES
+// ==========================================
 
+// Authentication Wrapper
 const ownerLoginHandler = (req, res) => {
     const { username, password } = req.body;
     if(username === 'owner' && password === 'admin123') res.json({ success: true });
     else res.status(401).json({ success: false, message: "Invalid credentials" });
 };
 
-// V6 Routes
+// V6 Endpoints
 app.post('/api/v6/owner/login', ownerLoginHandler);
+
 app.get('/api/v6/owner/stats', async (req, res) => {
-    try { res.json({ totalRevenue: 50000, users: await User.countDocuments() }); } catch(err) { res.status(500).json({}); }
+    try { res.json({ totalRevenue: 50000, users: await User.countDocuments(), enterprises: await Enterprise.countDocuments() }); } catch(err) { res.status(500).json({}); }
 });
+
 app.get('/api/v6/owner/fraud-reports', async (req, res) => {
-    try { res.json(await SpamReport.find().sort({ createdAt: -1 }).limit(20)); } catch(err) { res.status(500).json([]); }
+    try { res.json(await SpamReport.find().sort({ createdAt: -1 }).limit(50)); } catch(err) { res.status(500).json([]); }
 });
+
 app.post('/api/v6/owner/suspend-number', async (req, res) => {
     try { await SpamReport.updateMany({ number: req.body.number }, { status: 'Suspended' }); res.json({ success: true }); } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ NEW: DIRECTORY UPLOAD ROUTE
+// Directory Management
 app.post('/api/v6/owner/directory/add', async (req, res) => {
     try {
-        const { companyName, phoneNumber, category } = req.body;
-        const entry = new DirectoryEntry({ companyName, phoneNumber, category });
+        const entry = new DirectoryEntry(req.body);
         await entry.save();
-        res.json({ success: true, message: "Added" });
-    } catch(err) { 
-        console.error("Directory Add Error:", err);
-        res.status(500).json({ success: false, message: err.message }); 
-    }
+        res.json({ success: true });
+    } catch(err) { res.status(500).json({ success: false }); }
+});
+
+app.post('/api/v6/owner/directory/bulk', async (req, res) => {
+    try {
+        if(Array.isArray(req.body.entries)) {
+            await DirectoryEntry.insertMany(req.body.entries);
+            res.json({ success: true, count: req.body.entries.length });
+        } else {
+            res.status(400).json({ success: false, message: "Invalid Format" });
+        }
+    } catch(err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
 app.get('/api/v6/owner/directory/list', async (req, res) => {
-    try {
-        const list = await DirectoryEntry.find().sort({ companyName: 1 }).limit(100);
-        res.json(list);
-    } catch(err) { res.status(500).json([]); }
+    try { res.json(await DirectoryEntry.find().sort({ companyName: 1 }).limit(100)); } catch(err) { res.status(500).json([]); }
 });
 
-// V1 Backward Compatibility
+// Subscriber Lists
+app.get('/api/v6/owner/subscribers/b2c', async (req, res) => {
+    try { res.json(await User.find({}, 'fullName phoneNumber age email createdAt onboardingStep').sort({createdAt:-1}).limit(100)); } catch(err) { res.status(500).json([]); }
+});
+
+app.get('/api/v6/owner/subscribers/b2b', async (req, res) => {
+    try { res.json(await Enterprise.find().sort({createdAt:-1}).limit(100)); } catch(err) { res.status(500).json([]); }
+});
+
+app.post('/api/v6/owner/subscribers/b2b/add', async (req, res) => {
+    try { const ent = new Enterprise(req.body); await ent.save(); res.json({ success: true }); } catch(err) { res.status(500).json({ success: false }); }
+});
+
+// Backward Compatibility (Prevent 404s on old caches)
 app.post('/api/v1/owner/login', ownerLoginHandler);
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => { console.log(`🚀 V6.3 Server running on port ${PORT}`); });
+app.listen(PORT, () => { console.log(`🚀 VBCS V7.0 Server running on port ${PORT}`); });
