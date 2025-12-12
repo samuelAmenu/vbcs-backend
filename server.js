@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS MASTER SERVER V7.0 (Final Release)
+   VBCS MASTER SERVER V8.0 (Final: Admin + Guardian Pro)
    ================================================== */
 
 require('dotenv').config();
@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: '10mb' })); // Support large bulk uploads
+app.use(express.json({ limit: '50mb' })); // Increased for Image Uploads
 
 // ⚠️ DATABASE CONNECTION
 const MONGO_URI = "mongodb+srv://sami_dbuser:SAMI!ame11@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
@@ -24,54 +24,55 @@ mongoose.connect(MONGO_URI)
   });
 
 // ==========================================
-// 1. DATABASE SCHEMAS (The Blueprint)
+// 1. SCHEMAS
 // ==========================================
 
-// User Identity & Guardian Profile
 const userSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true, unique: true },
     passwordHash: String,
     salt: String,
     
-    // Profile
+    // Identity (V8 Upgrade)
     fullName: String,
     email: String,
     age: Number,
     secondaryPhone: String,
-    dob: String,
+    profilePic: String, // Base64 Image
+    inviteCode: { type: String, unique: true }, // For family invites
     
-    // Device Fingerprint
+    // Device
     device: { 
         name: { type: String, default: '' }, 
         imei: { type: String, default: '' }, 
         type: { type: String, default: 'Mobile' } 
     },
     
-    // Guardian Engine Data
+    // Guardian Engine
     location: { lat: Number, lng: Number, updatedAt: Date },
-    circle: [{ phone: String, name: String, status: { type: String, default: 'pending' } }], // Family
-    invites: [{ fromName: String, fromPhone: String, date: { type: Date, default: Date.now } }], // Incoming requests
+    batteryLevel: { type: Number, default: 100 },
+    circle: [{ phone: String, name: String, status: { type: String, default: 'active' } }],
+    invites: [{ fromName: String, fromPhone: String, date: { type: Date, default: Date.now } }],
     
-    // Auth State
+    // State
     otp: String,
     otpExpires: Date,
     onboardingStep: { type: Number, default: 0 },
     createdAt: { type: Date, default: Date.now }
 });
 
-userSchema.methods.setPassword = function(password) {
-    this.salt = crypto.randomBytes(16).toString('hex');
-    this.passwordHash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
-};
-userSchema.methods.validatePassword = function(password) {
-    if (!this.passwordHash || !this.salt) return false;
-    const hash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
-    return this.passwordHash === hash;
-};
+userSchema.methods.setPassword = function(p) { this.salt = crypto.randomBytes(16).toString('hex'); this.passwordHash = crypto.pbkdf2Sync(p, this.salt, 1000, 64, 'sha512').toString('hex'); };
+userSchema.methods.validatePassword = function(p) { if(!this.passwordHash) return false; return this.passwordHash === crypto.pbkdf2Sync(p, this.salt, 1000, 64, 'sha512').toString('hex'); };
+
+// Generate unique 6-char invite code before saving
+userSchema.pre('save', function(next) {
+    if (!this.inviteCode) {
+        this.inviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+    }
+    next();
+});
 
 const User = mongoose.model('User', userSchema);
 
-// Security & Business Data
 const SpamReport = mongoose.model('SpamReport', new mongoose.Schema({
     number: String, reason: String, comments: String, status: { type: String, default: 'Pending' }, createdAt: { type: Date, default: Date.now }
 }));
@@ -85,19 +86,17 @@ const Enterprise = mongoose.model('Enterprise', new mongoose.Schema({
 }));
 
 // ==========================================
-// 2. MOBILE APP ROUTES
+// 2. MOBILE APP ROUTES (V8)
 // ==========================================
 
-// --- AUTHENTICATION ---
-app.post('/api/v6/auth/otp-request', async (req, res) => {
+// AUTH
+app.post('/api/v8/auth/otp-request', async (req, res) => {
     try {
         const { phoneNumber } = req.body;
         if (!phoneNumber) return res.status(400).json({ success: false });
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        
         let user = await User.findOne({ phoneNumber });
         if (!user) user = new User({ phoneNumber });
-        
         user.otp = otp;
         user.otpExpires = new Date(Date.now() + 5 * 60000);
         await user.save();
@@ -105,7 +104,7 @@ app.post('/api/v6/auth/otp-request', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false }); }
 });
 
-app.post('/api/v6/auth/otp-verify', async (req, res) => {
+app.post('/api/v8/auth/otp-verify', async (req, res) => {
     try {
         const { phoneNumber, code } = req.body;
         const user = await User.findOne({ phoneNumber });
@@ -113,7 +112,6 @@ app.post('/api/v6/auth/otp-verify', async (req, res) => {
         
         user.otp = null;
         let nextStep = 'home';
-        // Logic: Force Wizard if profile incomplete
         if (user.onboardingStep < 4) {
             if (!user.fullName) nextStep = 'personal';
             else if (!user.device || !user.device.name) nextStep = 'device';
@@ -124,7 +122,7 @@ app.post('/api/v6/auth/otp-verify', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false }); }
 });
 
-app.post('/api/v6/auth/login', async (req, res) => {
+app.post('/api/v8/auth/login', async (req, res) => {
     try {
         const { phoneNumber, password } = req.body;
         const user = await User.findOne({ phoneNumber });
@@ -133,37 +131,85 @@ app.post('/api/v6/auth/login', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ONBOARDING WIZARD ---
-app.post('/api/v6/onboarding/personal', async (req, res) => {
-    await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { ...req.body, onboardingStep: 2 });
+// ONBOARDING (V8: Includes Picture)
+app.post('/api/v8/onboarding/personal', async (req, res) => {
+    try {
+        // Saves Name, Email, Age, SecPhone, AND ProfilePic
+        await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { ...req.body, onboardingStep: 2 });
+        res.json({ success: true });
+    } catch(err) { res.status(500).json({ success: false }); }
+});
+
+app.post('/api/v8/onboarding/device', async (req, res) => {
+    try {
+        const { phoneNumber, deviceName, imei } = req.body;
+        const deviceData = { name: deviceName, imei: imei, type: 'Mobile' };
+        await User.findOneAndUpdate({ phoneNumber }, { device: deviceData, onboardingStep: 3 });
+        res.json({ success: true });
+    } catch(err) { res.status(500).json({ success: false }); }
+});
+
+app.post('/api/v8/onboarding/password', async (req, res) => {
+    try {
+        const user = await User.findOne({ phoneNumber: req.body.phoneNumber });
+        user.setPassword(req.body.password);
+        user.onboardingStep = 4;
+        await user.save();
+        res.json({ success: true, user });
+    } catch(err) { res.status(500).json({ success: false }); }
+});
+
+// GUARDIAN V8 (Invite Codes + Images)
+app.post('/api/v8/guardian/location', async (req, res) => {
+    await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { location: { lat: req.body.lat, lng: req.body.lng, updatedAt: new Date() } });
     res.json({ success: true });
 });
 
-app.post('/api/v6/onboarding/device', async (req, res) => {
-    const { phoneNumber, deviceName, imei } = req.body;
-    const deviceData = { name: deviceName, imei: imei, type: 'Mobile' };
-    await User.findOneAndUpdate({ phoneNumber }, { device: deviceData, onboardingStep: 3 });
-    res.json({ success: true });
+app.post('/api/v8/guardian/join', async (req, res) => {
+    const { myPhone, inviteCode } = req.body;
+    const target = await User.findOne({ inviteCode });
+    const me = await User.findOne({ phoneNumber: myPhone });
+    
+    if (!target) return res.status(404).json({ success: false, message: "Invalid Code" });
+    
+    // Bidirectional Link
+    target.circle.push({ phone: me.phoneNumber, name: me.fullName });
+    me.circle.push({ phone: target.phoneNumber, name: target.fullName });
+    
+    await target.save();
+    await me.save();
+    res.json({ success: true, targetName: target.fullName });
 });
 
-app.post('/api/v6/onboarding/password', async (req, res) => {
-    const user = await User.findOne({ phoneNumber: req.body.phoneNumber });
-    user.setPassword(req.body.password);
-    user.onboardingStep = 4; // Complete
-    await user.save();
-    res.json({ success: true, user });
+app.get('/api/v8/guardian/circle', async (req, res) => {
+    const me = await User.findOne({ phoneNumber: req.query.phone });
+    if (!me) return res.json({ circle: [] });
+    
+    const mapData = [];
+    for (let m of me.circle) {
+        const u = await User.findOne({ phoneNumber: m.phone });
+        if (u && u.location) {
+            mapData.push({ 
+                name: u.fullName, 
+                phone: u.phoneNumber, 
+                lat: u.location.lat, 
+                lng: u.location.lng,
+                pic: u.profilePic, // Send image for avatar
+                initials: u.fullName ? u.fullName.substring(0,2).toUpperCase() : 'NA'
+            });
+        }
+    }
+    res.json({ success: true, circle: mapData, myCode: me.inviteCode });
 });
 
-// --- SECURITY TOOLS (Caller ID / SMS) ---
+// TOOLS & UTILS (V6 Logic)
 app.get('/api/v6/lookup/call/:number', async (req, res) => {
     try {
         const { number } = req.params;
         const dirMatch = await DirectoryEntry.findOne({ phoneNumber: number });
         if(dirMatch) return res.json({ status: 'verified', name: dirMatch.companyName });
-        
         const spamCount = await SpamReport.countDocuments({ number: number });
         if(spamCount > 0) return res.json({ status: 'warning', count: spamCount });
-        
         res.json({ status: 'unverified' });
     } catch (err) { res.status(500).json({ status: 'error' }); }
 });
@@ -171,12 +217,10 @@ app.get('/api/v6/lookup/call/:number', async (req, res) => {
 app.get('/api/v6/lookup/sms/:sender', async (req, res) => {
     try {
         const { sender } = req.params;
-        const dirMatch = await DirectoryEntry.findOne({ phoneNumber: sender }); // e.g. "CBE" or "8989"
+        const dirMatch = await DirectoryEntry.findOne({ phoneNumber: sender });
         if(dirMatch) return res.json({ status: 'verified', name: dirMatch.companyName });
-        
         const spamCount = await SpamReport.countDocuments({ number: sender });
         if(spamCount > 0) return res.json({ status: 'danger', count: spamCount });
-        
         res.json({ status: 'unknown' });
     } catch (err) { res.status(500).json({ status: 'error' }); }
 });
@@ -199,63 +243,16 @@ app.post('/api/v6/reports', async (req, res) => {
     } catch (error) { res.status(500).json({ success: false }); }
 });
 
-// --- GUARDIAN ENGINE (GPS & Family) ---
-app.post('/api/v6/guardian/location', async (req, res) => {
-    const { phoneNumber, lat, lng } = req.body;
-    await User.findOneAndUpdate({ phoneNumber }, { location: { lat, lng, updatedAt: new Date() } });
-    res.json({ success: true });
-});
-
-app.post('/api/v6/guardian/invite', async (req, res) => {
-    try {
-        const { myPhone, targetPhone, name } = req.body;
-        const me = await User.findOne({ phoneNumber: myPhone });
-        const target = await User.findOne({ phoneNumber: targetPhone });
-
-        if (!target) return res.status(404).json({ success: false, message: "User not found" });
-
-        me.circle.push({ phone: targetPhone, name: name, status: 'pending' });
-        target.invites.push({ fromName: me.fullName, fromPhone: me.phoneNumber });
-        
-        await me.save();
-        await target.save();
-        res.json({ success: true });
-    } catch(err) { res.status(500).json({ success: false }); }
-});
-
-app.get('/api/v6/guardian/circle', async (req, res) => {
-    try {
-        const me = await User.findOne({ phoneNumber: req.query.phone });
-        if(!me) return res.json({ success: true, circle: [], invites: [] });
-
-        const mapData = [];
-        for (let member of me.circle) {
-            const u = await User.findOne({ phoneNumber: member.phone });
-            if (u && u.location) {
-                mapData.push({ 
-                    name: member.name, 
-                    phone: member.phone, 
-                    lat: u.location.lat, 
-                    lng: u.location.lng 
-                });
-            }
-        }
-        res.json({ success: true, circle: mapData, invites: me.invites });
-    } catch(err) { res.status(500).json({ success: false }); }
-});
-
 // ==========================================
-// 3. ADMIN / OWNER ROUTES
+// 3. ADMIN / OWNER ROUTES (V6)
 // ==========================================
 
-// Authentication Wrapper
 const ownerLoginHandler = (req, res) => {
     const { username, password } = req.body;
     if(username === 'owner' && password === 'admin123') res.json({ success: true });
     else res.status(401).json({ success: false, message: "Invalid credentials" });
 };
 
-// V6 Endpoints
 app.post('/api/v6/owner/login', ownerLoginHandler);
 
 app.get('/api/v6/owner/stats', async (req, res) => {
@@ -272,11 +269,7 @@ app.post('/api/v6/owner/suspend-number', async (req, res) => {
 
 // Directory Management
 app.post('/api/v6/owner/directory/add', async (req, res) => {
-    try {
-        const entry = new DirectoryEntry(req.body);
-        await entry.save();
-        res.json({ success: true });
-    } catch(err) { res.status(500).json({ success: false }); }
+    try { const entry = new DirectoryEntry(req.body); await entry.save(); res.json({ success: true }); } catch(err) { res.status(500).json({ success: false }); }
 });
 
 app.post('/api/v6/owner/directory/bulk', async (req, res) => {
@@ -284,10 +277,8 @@ app.post('/api/v6/owner/directory/bulk', async (req, res) => {
         if(Array.isArray(req.body.entries)) {
             await DirectoryEntry.insertMany(req.body.entries);
             res.json({ success: true, count: req.body.entries.length });
-        } else {
-            res.status(400).json({ success: false, message: "Invalid Format" });
-        }
-    } catch(err) { res.status(500).json({ success: false, message: err.message }); }
+        } else { res.status(400).json({ success: false }); }
+    } catch(err) { res.status(500).json({ success: false }); }
 });
 
 app.get('/api/v6/owner/directory/list', async (req, res) => {
@@ -307,8 +298,8 @@ app.post('/api/v6/owner/subscribers/b2b/add', async (req, res) => {
     try { const ent = new Enterprise(req.body); await ent.save(); res.json({ success: true }); } catch(err) { res.status(500).json({ success: false }); }
 });
 
-// Backward Compatibility (Prevent 404s on old caches)
+// Backward Compatibility
 app.post('/api/v1/owner/login', ownerLoginHandler);
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => { console.log(`🚀 VBCS V7.0 Server running on port ${PORT}`); });
+app.listen(PORT, () => { console.log(`🚀 V8.0 Master Server running on port ${PORT}`); });
