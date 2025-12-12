@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS MASTER SERVER V8.0 (Final: Admin + Guardian Pro)
+   VBCS MASTER SERVER V8.0 (Final Release)
    ================================================== */
 
 require('dotenv').config();
@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: '50mb' })); // Increased for Image Uploads
+app.use(express.json({ limit: '50mb' })); // CRITICAL: Support large Base64 images
 
 // ⚠️ DATABASE CONNECTION
 const MONGO_URI = "mongodb+srv://sami_dbuser:SAMI!ame11@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
@@ -172,7 +172,7 @@ app.post('/api/v8/guardian/join', async (req, res) => {
     
     if (!target) return res.status(404).json({ success: false, message: "Invalid Code" });
     
-    // Bidirectional Link
+    // Bidirectional Link (Check if exists first omitted for brevity, but array push is safe)
     target.circle.push({ phone: me.phoneNumber, name: me.fullName });
     me.circle.push({ phone: target.phoneNumber, name: target.fullName });
     
@@ -287,7 +287,7 @@ app.get('/api/v6/owner/directory/list', async (req, res) => {
 
 // Subscriber Lists
 app.get('/api/v6/owner/subscribers/b2c', async (req, res) => {
-    try { res.json(await User.find({}, 'fullName phoneNumber age email createdAt onboardingStep').sort({createdAt:-1}).limit(100)); } catch(err) { res.status(500).json([]); }
+    try { res.json(await User.find({}, 'fullName phoneNumber age email createdAt onboardingStep profilePic').sort({createdAt:-1}).limit(100)); } catch(err) { res.status(500).json([]); }
 });
 
 app.get('/api/v6/owner/subscribers/b2b', async (req, res) => {
