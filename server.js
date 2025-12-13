@@ -85,6 +85,21 @@ const SuspiciousNumber = mongoose.model('SuspiciousNumber', new mongoose.Schema(
     phoneNumber: String, reportCount: { type: Number, default: 0 }, status: { type: String, default: 'Warning' }
 }));
 
+// --- V12.2: DASHBOARD STATS ---
+app.get('/api/v12/stats/spam-today', async (req, res) => {
+    try {
+        // Count reports created since midnight today
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+        
+        const count = await SpamReport.countDocuments({ 
+            createdAt: { $gte: startOfDay } 
+        });
+        
+        res.json({ count });
+    } catch(e) { res.json({ count: 0 }); }
+});
+
 // ==========================================
 // 4. REAL-TIME ENGINE
 // ==========================================
