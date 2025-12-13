@@ -13,36 +13,48 @@ const userSchema = new mongoose.Schema({
         required: true 
     },
     
+    // --- CRITICAL: Role & Auth ---
+    role: {
+        type: String,
+        enum: ['subscriber', 'admin'],
+        default: 'subscriber'
+    },
+    otp: { type: String },
+    otpExpires: { type: Date },
+
     // --- Profile Details ---
     fullName: { type: String, default: 'Subscriber' },
     email: { type: String },
+    profilePic: { type: String },
     imei: { type: String },
-    age: { type: Number },
     
-    // --- Subscription Status ---
+    // --- Subscription & Status ---
     plan: { 
         type: String, 
-        enum: ['free', 'premium'],
+        enum: ['free', 'premium'], 
         default: 'free' 
     },
-    subscriptionExpires: { type: Date },
+    status: { 
+        type: String, 
+        enum: ['Safe', 'Lost', 'SOS'], 
+        default: 'Safe' 
+    },
 
-    // --- NEW: Guardian Circle (The Real Family List) ---
+    // --- Guardian Circle (Family) ---
     familyMembers: [{
         name: String,
         phone: String,
-        status: { 
-            type: String, 
-            enum: ['Pending', 'Active'], 
-            default: 'Pending' 
-        },
-        addedAt: { type: Date, default: Date.now }
+        status: { type: String, enum: ['Pending', 'Active'], default: 'Pending' }
     }],
 
-    createdAt: { 
-        type: Date, 
-        default: Date.now 
-    }
+    // --- Location Data ---
+    location: { 
+        lat: Number, 
+        lng: Number, 
+        updatedAt: Date 
+    },
+    
+    createdAt: { type: Date, default: Date.now }
 });
 
 module.exports = mongoose.model('User', userSchema);

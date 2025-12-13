@@ -1,15 +1,18 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.1 (FIXED AUTH & FEATURES)
+   VBCS MASTER SERVER V12.2 (MERGED & FIXED)
    ================================================== */
 
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const crypto = require('crypto');
 const path = require('path');
 const http = require('http'); 
 const { Server } = require("socket.io"); 
+
+// --- IMPORT THE NEW MODEL ---
+// We use the external file because it contains the 'role' field needed for the Dashboard
+const User = require('./models/User'); 
 
 const app = express();
 const server = http.createServer(app); 
@@ -28,50 +31,21 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.error('❌ DB Error:', err.message));
 
 // ==========================================
-// 3. SCHEMAS
+// 3. INTEGRATE NEW AUTH & ADMIN SYSTEM
 // ==========================================
+// This connects the 'userController' logic we wrote to handle Registration & Admin Dashboard
+const userRoutes = require('./routes/userRoutes'); 
+app.use('/api/users', userRoutes); 
+// New Endpoints:
+// POST /api/users/register (New Subscriber)
+// POST /api/users/login    (Login)
+// GET  /api/users/all      (Admin Dashboard)
 
-// A. USER SCHEMA
-const userSchema = new mongoose.Schema({
-    phoneNumber: { type: String, required: true, unique: true, index: true }, 
-    passwordHash: String,
-    salt: String,
-    fullName: String,
-    email: String,
-    profilePic: String, 
-    circle: [{ phone: String, name: String, status: { type: String, default: 'active' } }],
-    savedPlaces: [{ label: String, lat: Number, lng: Number, icon: String }],
-    
-    // Lost Mode
-    status: { type: String, enum: ['Safe', 'Lost', 'SOS'], default: 'Safe' },
-    lostModeConfig: {
-        message: { type: String, default: "If found, please call 9449." },
-        audioAlertActive: { type: Boolean, default: false }
-    },
+// ==========================================
+// 4. LEGACY SCHEMAS (Directory & Reports)
+// ==========================================
+// We kept these here as you requested to preserve functionality
 
-    // Auth & Status
-    otp: String,
-    otpExpires: Date,
-    onboardingStep: { type: Number, default: 0 },
-    createdAt: { type: Date, default: Date.now },
-    location: { lat: Number, lng: Number, speed: Number, updatedAt: Date },
-    batteryLevel: { type: Number, default: 100 }
-});
-
-userSchema.methods.setPassword = function(password) {
-    this.salt = crypto.randomBytes(16).toString('hex');
-    // Sync version for simplicity in V12 fix
-    this.passwordHash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
-};
-userSchema.methods.validatePassword = function(password) {
-    if (!this.passwordHash || !this.salt) return false;
-    const hash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
-    return this.passwordHash === hash;
-};
-
-const User = mongoose.model('User', userSchema);
-
-// B. DIRECTORY & REPORTS
 const DirectoryEntry = mongoose.model('DirectoryEntry', new mongoose.Schema({
     companyName: String, phoneNumber: String, category: String, 
     email: String, officeAddress: String, isVerified: { type: Boolean, default: true }
@@ -88,7 +62,6 @@ const SuspiciousNumber = mongoose.model('SuspiciousNumber', new mongoose.Schema(
 // --- V12.2: DASHBOARD STATS ---
 app.get('/api/v12/stats/spam-today', async (req, res) => {
     try {
-        // Count reports created since midnight today
         const startOfDay = new Date();
         startOfDay.setHours(0, 0, 0, 0);
         
@@ -101,7 +74,7 @@ app.get('/api/v12/stats/spam-today', async (req, res) => {
 });
 
 // ==========================================
-// 4. REAL-TIME ENGINE
+// 5. REAL-TIME ENGINE (Socket.io)
 // ==========================================
 
 io.on('connection', (socket) => {
@@ -120,8 +93,8 @@ io.on('connection', (socket) => {
             if (user && user.status === 'Lost') {
                 socket.emit('command_execute', { 
                     command: 'ACTIVATE_LOST_MODE', 
-                    message: user.lostModeConfig.message,
-                    playSiren: user.lostModeConfig.audioAlertActive
+                    message: user.lostModeConfig?.message || "Lost Mode Active",
+                    playSiren: user.lostModeConfig?.audioAlertActive || false
                 });
             }
         } catch (e) { console.error(e); }
@@ -129,8 +102,8 @@ io.on('connection', (socket) => {
 
     socket.on('trigger_sos', async (data) => {
         const user = await User.findOne({ phoneNumber: data.phone });
-        if(user && user.circle) {
-             user.circle.forEach(member => {
+        if(user && user.familyMembers) { // Updated to match new Model field 'familyMembers'
+             user.familyMembers.forEach(member => {
                  io.to(member.phone).emit('sos_alert', { fromName: user.fullName, lat: data.lat, lng: data.lng });
              });
         }
@@ -138,84 +111,8 @@ io.on('connection', (socket) => {
 });
 
 // ==========================================
-// 5. API ROUTES (RESTORED AUTH)
+// 6. FEATURES (Lookup, Reports, Guardian)
 // ==========================================
-
-// --- A. AUTHENTICATION (The Missing Link) ---
-
-// 1. Request OTP
-app.post('/api/v9/auth/otp-request', async (req, res) => {
-    try {
-        const { phoneNumber } = req.body;
-        if (!phoneNumber) return res.status(400).json({ success: false, message: "Phone required" });
-        
-        // Generate Fixed Test Code for Stability: "123456"
-        // In Prod: const otp = crypto.randomInt(100000, 999999).toString();
-        const otp = "123456"; 
-        
-        let user = await User.findOne({ phoneNumber });
-        if (!user) user = new User({ phoneNumber });
-        
-        user.otp = otp;
-        user.otpExpires = new Date(Date.now() + 5 * 60000); 
-        await user.save();
-        
-        console.log(`🔑 OTP for ${phoneNumber}: ${otp}`);
-        res.json({ success: true, testCode: otp }); 
-    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
-});
-
-// 2. Verify OTP (RESTORED)
-app.post('/api/v9/auth/otp-verify', async (req, res) => {
-    try {
-        const { phoneNumber, code } = req.body;
-        const user = await User.findOne({ phoneNumber });
-        
-        if (!user || user.otp !== code) return res.status(400).json({ success: false, message: "Invalid OTP" });
-        
-        user.otp = null; // Clear OTP
-        
-        // Determine Routing
-        let nextStep = 'home';
-        if (user.onboardingStep < 2 && !user.fullName) nextStep = 'wizard'; // Send to profile setup if new
-        
-        await user.save();
-        
-        // Remove heavy profilePic before sending
-        const userLite = user.toObject();
-        delete userLite.profilePic; 
-        
-        res.json({ success: true, nextStep, user: userLite });
-    } catch (err) { 
-        console.error(err);
-        res.status(500).json({ success: false }); 
-    }
-});
-
-// 3. Password Login
-app.post('/api/v9/auth/login', async (req, res) => {
-    try {
-        const { phoneNumber, password } = req.body;
-        const user = await User.findOne({ phoneNumber });
-        if (!user) return res.status(400).json({ success: false, message: "User not found" });
-
-        const isValid = await user.validatePassword(password);
-        if (!isValid) return res.status(400).json({ success: false, message: "Invalid Password" });
-        
-        const userLite = user.toObject();
-        delete userLite.profilePic; 
-        
-        res.json({ success: true, user: userLite });
-    } catch (err) { res.status(500).json({ success: false }); }
-});
-
-// --- B. ONBOARDING ---
-app.post('/api/v9/onboarding/personal', async (req, res) => {
-    try {
-        await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { ...req.body, onboardingStep: 4 });
-        res.json({ success: true });
-    } catch(err) { res.status(500).json({ success: false }); }
-});
 
 // --- C. V12 FEATURES (Reports & Lookup) ---
 app.get('/api/v12/lookup/:number', async (req, res) => {
@@ -254,43 +151,33 @@ app.get('/api/v12/directory/search', async (req, res) => {
 });
 
 // --- GUARDIAN FEATURES ---
+// Note: These now use the 'User' model imported from models/User.js
+
 app.post('/api/v12/guardian/invite/generate', async (req, res) => {
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { inviteCode: code });
+    // Using 'otp' field for invite code to save space, or you can add inviteCode to model
+    await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { otp: code }); 
     res.json({ success: true, code });
-});
-
-app.post('/api/v9/guardian/join', async (req, res) => {
-    const { myPhone, inviteCode } = req.body;
-    const target = await User.findOne({ inviteCode });
-    const me = await User.findOne({ phoneNumber: myPhone });
-    
-    if(!target) return res.status(404).json({message: "Invalid Code"});
-    
-    // Mutual Add
-    if(!me.circle.some(c=>c.phone===target.phoneNumber)) me.circle.push({phone:target.phoneNumber, name:target.fullName});
-    if(!target.circle.some(c=>c.phone===me.phoneNumber)) target.circle.push({phone:me.phoneNumber, name:me.fullName});
-    
-    await me.save(); await target.save();
-    res.json({ success: true, targetName: target.fullName });
 });
 
 app.get('/api/v9/guardian/circle', async (req, res) => {
     const me = await User.findOne({ phoneNumber: req.query.phone });
-    if (!me) return res.json({ circle: [] });
-    const phones = me.circle.map(c => c.phone);
-    const members = await User.find({ phoneNumber: { $in: phones } }).select('fullName phoneNumber location profilePic batteryLevel');
+    if (!me || !me.familyMembers) return res.json({ circle: [] });
+    
+    // Adapted logic for new Schema 'familyMembers'
+    const phones = me.familyMembers.map(c => c.phone);
+    const members = await User.find({ phoneNumber: { $in: phones } }).select('fullName phoneNumber location profilePic');
     
     const data = members.map(u => ({
         name: u.fullName, phone: u.phoneNumber, 
         lat: u.location?.lat, lng: u.location?.lng, 
-        pic: u.profilePic, battery: u.batteryLevel
+        pic: u.profilePic
     }));
-    res.json({ success: true, circle: data, myCode: me.inviteCode });
+    res.json({ success: true, circle: data });
 });
 
 // --- SERVE FRONTEND ---
 app.get('/', (req, res) => { res.sendFile(path.join(__dirname, 'public.html')); });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.1 Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.2 Server Running on Port ${PORT}`); });
