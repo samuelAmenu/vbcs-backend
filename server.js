@@ -369,22 +369,38 @@ ownerRouter.post('/directory-add', async (req, res) => {
     res.json({ success: true });
 });
 
-// --- CSV UPLOAD (CRASH PROOF) ---
+// --- CSV UPLOAD (ROBUST VERSION) ---
 ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
     if(!req.file) return res.status(400).json({ message: "No file found" });
+    
     const results = [];
     fs.createReadStream(req.file.path)
         .pipe(csv())
         .on('data', (data) => results.push(data))
         .on('end', async () => {
-            const entries = results.map(row => ({
-                companyName: row.Name || row.companyName,
-                phoneNumber: row.Phone || row.phoneNumber,
-                category: row.Category || row.category || 'Other'
-            }));
-            await DirectoryEntry.insertMany(entries);
-            fs.unlinkSync(req.file.path);
-            res.json({ success: true, message: `Imported ${entries.length} items` });
+            try {
+                const entries = results.map(row => ({
+                    companyName: row.Name || row.companyName || 'Unknown',
+                    phoneNumber: row.Phone || row.phoneNumber || '000',
+                    category: row.Category || row.category || 'Other'
+                }));
+                
+                if(entries.length === 0) {
+                     return res.json({ success: false, message: "CSV file was empty or unreadable" });
+                }
+
+                await DirectoryEntry.insertMany(entries);
+                fs.unlinkSync(req.file.path);
+                res.json({ success: true, message: `Imported ${entries.length} items` });
+            } catch (e) {
+                console.error(e);
+                res.status(500).json({ message: "Database Error during import" });
+            }
+        })
+        .on('error', (err) => {
+            // CATCHES FILE ERRORS (e.g. Binary/Excel files)
+            console.error("CSV Parse Error:", err);
+            res.status(400).json({ message: "Invalid CSV file. Please save as .CSV (UTF-8)" });
         });
 });
 
