@@ -124,7 +124,7 @@
                     <p style="font-size:12px; color:#666; margin-top:0;">Columns: Name, Phone, Category</p>
                     <div class="input-group">
                         <input type="file" id="csv-file" accept=".csv">
-                        <button class="btn" onclick="uploadCsv()">Upload Database</button>
+                        <button class="btn" onclick="uploadCsv(this)">Upload Database</button>
                     </div>
                 </div>
 
@@ -161,7 +161,7 @@
     </div>
 
     <script>
-        // TARGETING THE NEW V12.9 SERVER
+        // TARGETING THE LIVE SERVER
         const API = 'https://vbcs-backend-1.onrender.com/api/v1/owner';
         let currentUser = '';
 
@@ -344,19 +344,21 @@
             loadDirectory();
         }
 
-        async function uploadCsv() {
-            const file = document.getElementById('csv-file').files[0];
+        // --- FIX: ROBUST UPLOAD FUNCTION ---
+        async function uploadCsv(btn) {
+            const input = document.getElementById('csv-file');
+            const file = input.files[0];
+            
             if(!file) return alert("Select a CSV file first");
             
             const fd = new FormData();
             fd.append('file', file);
             
-            // FIX: Select the specific button inside the Bulk Upload card
-            // (The old code selected the 'Add' button by mistake)
-            const btn = document.querySelector('#directory-page .card:nth-child(3) .btn');
-            const origText = btn ? btn.innerText : "Upload Database";
-            
-            if(btn) btn.innerText = "Uploading...";
+            // Visual Feedback
+            const origText = btn.innerText;
+            btn.innerText = "Uploading...";
+            btn.disabled = true;
+            btn.style.opacity = "0.7";
             
             try {
                 const res = await fetch(`${API}/directory-upload`, { method:'POST', body:fd });
@@ -364,16 +366,20 @@
                 
                 if(res.ok) {
                     alert(d.message);
+                    input.value = ''; // Clear input
                     loadDirectory();
                 } else {
                     alert("Server Error: " + (d.message || "Upload crashed"));
                 }
             } catch(e) { 
                 console.error(e);
-                alert("Upload Failed. Check console for details."); 
+                alert("Upload Failed. Check connection."); 
             }
             
-            if(btn) btn.innerText = origText;
+            // Reset Button
+            btn.innerText = origText;
+            btn.disabled = false;
+            btn.style.opacity = "1";
         }
 
         async function sendBroadcast() {
@@ -392,4 +398,4 @@
         }
     </script>
 </body>
-</html> 
+</html>
