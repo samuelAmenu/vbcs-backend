@@ -1,11 +1,11 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.9 (CORS FIXED + SUSPEND RESTORED)
+   VBCS MASTER SERVER V12.10 (AUTO-FIX INVALID ADMIN)
    ================================================== */
 
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
-const cors = require('cors'); // Vital for connecting admin.html
+const cors = require('cors'); 
 const crypto = require('crypto');
 const path = require('path');
 const http = require('http'); 
@@ -17,7 +17,7 @@ const fs = require('fs');
 const app = express();
 const server = http.createServer(app); 
 
-// --- 1. FIXED CORS SETTINGS (CRITICAL) ---
+// --- 1. FIXED CORS SETTINGS ---
 app.use(cors({
     origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -37,7 +37,7 @@ const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://sami_dbuser:SAMI!ame11
 mongoose.connect(MONGO_URI)
   .then(() => {
       console.log('✅ VBCS Engine: Ready & Connected');
-      initAdmin(); 
+      initAdmin(); // Auto-fix admin account
   })
   .catch(err => console.error('❌ DB Error:', err.message));
 
@@ -91,20 +91,34 @@ adminSchema.methods.setPassword = function(password) {
     this.passwordHash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
 };
 adminSchema.methods.validatePassword = function(password) {
+    if(!this.salt || !this.passwordHash) return false; // PREVENT CRASH IF CORRUPT
     const hash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
     return this.passwordHash === hash;
 };
 const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
 
+// --- UPDATED INIT ADMIN (FIXES THE CRASH) ---
 async function initAdmin() {
-    const exists = await Admin.findOne({ username: 'admin' });
-    if (!exists) {
+    const admin = await Admin.findOne({ username: 'admin' });
+    
+    // Case 1: No Admin -> Create it
+    if (!admin) {
         const newAdmin = new Admin({ username: 'admin' });
         newAdmin.setPassword('admin123');
         await newAdmin.save();
-        console.log("🔒 Default Admin Created (User: admin, Pass: admin123)");
+        console.log("🔒 Default Admin Created");
+    } 
+    // Case 2: Broken Admin (Missing Salt) -> Recreate it
+    else if (!admin.salt || !admin.passwordHash) {
+        console.log("⚠️ Found corrupted Admin (missing salt). Recreating...");
+        await Admin.deleteOne({ username: 'admin' });
+        const newAdmin = new Admin({ username: 'admin' });
+        newAdmin.setPassword('admin123');
+        await newAdmin.save();
+        console.log("🔒 Admin account repaired.");
     }
 }
+// -------------------------------------------
 
 // C. OTHERS
 const DirectoryEntry = mongoose.models.DirectoryEntry || mongoose.model('DirectoryEntry', new mongoose.Schema({
@@ -385,7 +399,6 @@ ownerRouter.get('/fraud-reports', async (req, res) => {
     res.json(mapped);
 });
 
-// --- RESTORED SUSPEND ROUTE ---
 ownerRouter.post('/suspend-number', async (req, res) => {
     const { number } = req.body;
     await SuspiciousNumber.findOneAndUpdate(
@@ -395,7 +408,6 @@ ownerRouter.post('/suspend-number', async (req, res) => {
     );
     res.json({ success: true });
 });
-// ------------------------------
 
 app.use('/api/v1/owner', ownerRouter);
 
@@ -406,4 +418,4 @@ app.get('/', (req, res) => { res.sendFile(path.join(__dirname, 'public.html')); 
 app.get('/admin', (req, res) => { res.sendFile(path.join(__dirname, 'admin.html')); });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.9 Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.10 Server Running on Port ${PORT}`); });
