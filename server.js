@@ -1,11 +1,11 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.9 (CORS FIXED + SUSPEND RESTORED)
+   VBCS MASTER SERVER V12.8 (COMPLETE MERGE: APP + ADMIN)
    ================================================== */
 
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
-const cors = require('cors'); // Vital for connecting admin.html
+const cors = require('cors');
 const crypto = require('crypto');
 const path = require('path');
 const http = require('http'); 
@@ -16,52 +16,53 @@ const fs = require('fs');
 
 const app = express();
 const server = http.createServer(app); 
-
-// --- 1. FIXED CORS SETTINGS (CRITICAL) ---
-app.use(cors({
-    origin: "*", 
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
-}));
-
 const io = new Server(server, { cors: { origin: "*" } }); 
 const upload = multer({ dest: 'uploads/' }); 
 
-// 2. MIDDLEWARE
+// 1. MIDDLEWARE
+app.use(cors()); 
 app.use(express.json({ limit: '50mb' })); 
 app.use(express.static(__dirname)); 
 
-// 3. DATABASE CONNECTION
+// 2. DATABASE CONNECTION
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://sami_dbuser:SAMI!ame11@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
 
 mongoose.connect(MONGO_URI)
   .then(() => {
       console.log('✅ VBCS Engine: Ready & Connected');
-      initAdmin(); 
+      initAdmin(); // Auto-create default admin if missing
   })
   .catch(err => console.error('❌ DB Error:', err.message));
 
 // ==========================================
-// 4. SCHEMAS
+// 3. SCHEMAS
 // ==========================================
 
-// A. USER
+// A. USER SCHEMA (Updated for Admin Dashboard)
 const userSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true, unique: true, index: true }, 
     passwordHash: String,
     salt: String,
-    role: { type: String, enum: ['subscriber', 'enterprise'], default: 'subscriber' }, 
-    companyName: String, 
+    
+    // --- FIELDS FOR ADMIN DASHBOARD ---
+    role: { type: String, enum: ['subscriber', 'enterprise'], default: 'subscriber' }, // B2B vs B2C
+    companyName: String, // Only for B2B
+    // ----------------------------------
+
     fullName: String,
     email: String,
     profilePic: String, 
     circle: [{ phone: String, name: String, status: { type: String, default: 'active' } }],
     savedPlaces: [{ label: String, lat: Number, lng: Number, icon: String }],
+    
+    // Lost Mode
     status: { type: String, enum: ['Safe', 'Lost', 'SOS'], default: 'Safe' },
     lostModeConfig: {
         message: { type: String, default: "If found, please call 9449." },
         audioAlertActive: { type: Boolean, default: false }
     },
+
+    // Auth & Status
     otp: String,
     otpExpires: Date,
     onboardingStep: { type: Number, default: 0 },
@@ -69,6 +70,7 @@ const userSchema = new mongoose.Schema({
     location: { lat: Number, lng: Number, speed: Number, updatedAt: Date },
     batteryLevel: { type: Number, default: 100 }
 });
+
 userSchema.methods.setPassword = function(password) {
     this.salt = crypto.randomBytes(16).toString('hex');
     this.passwordHash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
@@ -78,9 +80,11 @@ userSchema.methods.validatePassword = function(password) {
     const hash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
     return this.passwordHash === hash;
 };
+
+// Prevent Model Overwrite
 const User = mongoose.models.User || mongoose.model('User', userSchema);
 
-// B. ADMIN
+// B. ADMIN SCHEMA (For Owner Portal)
 const adminSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
     passwordHash: String,
@@ -96,6 +100,7 @@ adminSchema.methods.validatePassword = function(password) {
 };
 const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
 
+// Helper: Create Default Admin
 async function initAdmin() {
     const exists = await Admin.findOne({ username: 'admin' });
     if (!exists) {
@@ -106,7 +111,7 @@ async function initAdmin() {
     }
 }
 
-// C. OTHERS
+// C. DIRECTORY & CATEGORIES
 const DirectoryEntry = mongoose.models.DirectoryEntry || mongoose.model('DirectoryEntry', new mongoose.Schema({
     companyName: String, phoneNumber: String, category: String, 
     email: String, officeAddress: String, isVerified: { type: Boolean, default: true },
@@ -130,10 +135,12 @@ const Notification = mongoose.models.Notification || mongoose.model('Notificatio
 }));
 
 // ==========================================
-// 5. REAL-TIME ENGINE
+// 4. REAL-TIME ENGINE (SOCKET.IO)
 // ==========================================
+
 io.on('connection', (socket) => {
     socket.on('join_room', (phone) => { socket.join(phone); });
+
     socket.on('ping_location', async (data) => {
         try {
             const user = await User.findOneAndUpdate(
@@ -142,6 +149,7 @@ io.on('connection', (socket) => {
                 { new: true }
             );
             socket.broadcast.emit('friend_moved', data);
+
             if (user && user.status === 'Lost') {
                 socket.emit('command_execute', { 
                     command: 'ACTIVATE_LOST_MODE', 
@@ -151,6 +159,7 @@ io.on('connection', (socket) => {
             }
         } catch (e) { console.error(e); }
     });
+
     socket.on('trigger_sos', async (data) => {
         const user = await User.findOne({ phoneNumber: data.phone });
         if(user && user.circle) {
@@ -162,50 +171,70 @@ io.on('connection', (socket) => {
 });
 
 // ==========================================
-// 6. LEGACY API ROUTES (MOBILE APP)
+// 5. LEGACY API ROUTES (MOBILE APP V9)
 // ==========================================
+// I HAVE RESTORED ALL THESE ROUTES EXACTLY AS THEY WERE
+
+// 1. Request OTP
 app.post('/api/v9/auth/otp-request', async (req, res) => {
     try {
         const { phoneNumber } = req.body;
         if (!phoneNumber) return res.status(400).json({ success: false, message: "Phone required" });
-        const otp = "123456"; 
+        
+        const otp = "123456"; // Fixed Test Code
+        
         let user = await User.findOne({ phoneNumber });
         if (!user) user = new User({ phoneNumber });
+        
         user.otp = otp;
         user.otpExpires = new Date(Date.now() + 5 * 60000); 
         await user.save();
+        
+        console.log(`🔑 OTP for ${phoneNumber}: ${otp}`);
         res.json({ success: true, testCode: otp }); 
     } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
+// 2. Verify OTP
 app.post('/api/v9/auth/otp-verify', async (req, res) => {
     try {
         const { phoneNumber, code } = req.body;
         const user = await User.findOne({ phoneNumber });
+        
         if (!user || user.otp !== code) return res.status(400).json({ success: false, message: "Invalid OTP" });
+        
         user.otp = null; 
+        
         let nextStep = 'home';
         if (user.onboardingStep < 2 && !user.fullName) nextStep = 'wizard'; 
+        
         await user.save();
+        
         const userLite = user.toObject();
         delete userLite.profilePic; 
+        
         res.json({ success: true, nextStep, user: userLite });
     } catch (err) { res.status(500).json({ success: false }); }
 });
 
+// 3. Password Login
 app.post('/api/v9/auth/login', async (req, res) => {
     try {
         const { phoneNumber, password } = req.body;
         const user = await User.findOne({ phoneNumber });
         if (!user) return res.status(400).json({ success: false, message: "User not found" });
+
         const isValid = await user.validatePassword(password);
         if (!isValid) return res.status(400).json({ success: false, message: "Invalid Password" });
+        
         const userLite = user.toObject();
         delete userLite.profilePic; 
+        
         res.json({ success: true, user: userLite });
     } catch (err) { res.status(500).json({ success: false }); }
 });
 
+// 4. Onboarding
 app.post('/api/v9/onboarding/personal', async (req, res) => {
     try {
         await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { ...req.body, onboardingStep: 4 });
@@ -213,6 +242,7 @@ app.post('/api/v9/onboarding/personal', async (req, res) => {
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
+// 5. Lookup
 app.get('/api/v12/lookup/:number', async (req, res) => {
     const num = req.params.number;
     const verified = await DirectoryEntry.findOne({ phoneNumber: num });
@@ -222,6 +252,7 @@ app.get('/api/v12/lookup/:number', async (req, res) => {
     res.json({ status: 'unknown' });
 });
 
+// 6. Report
 app.post('/api/v12/report', async (req, res) => {
     try {
         const { reportedNumber } = req.body;
@@ -236,11 +267,13 @@ app.post('/api/v12/report', async (req, res) => {
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
+// 7. Directory Search
 app.get('/api/v12/directory/search', async (req, res) => {
     const regex = new RegExp(req.query.q, 'i');
     res.json(await DirectoryEntry.find({ $or: [{ companyName: regex }, { category: regex }] }).limit(20));
 });
 
+// 8. Guardian Features
 app.post('/api/v12/guardian/invite/generate', async (req, res) => {
     const code = Math.random().toString(36).substring(2, 8).toUpperCase();
     await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { inviteCode: code });
@@ -270,10 +303,11 @@ app.get('/api/v9/guardian/circle', async (req, res) => {
 });
 
 // ==========================================
-// 7. NEW: OWNER / ADMIN ROUTES (V1)
+// 6. NEW: OWNER / ADMIN ROUTES (V1)
 // ==========================================
 const ownerRouter = express.Router();
 
+// A. AUTH & SETTINGS
 ownerRouter.post('/login', async (req, res) => {
     const { username, password } = req.body;
     const admin = await Admin.findOne({ username });
@@ -295,13 +329,14 @@ ownerRouter.post('/change-password', async (req, res) => {
     }
 });
 
+// B. DASHBOARD STATS
 ownerRouter.get('/stats', async (req, res) => {
     try {
         const b2c = await User.countDocuments({ role: 'subscriber' });
         const b2b = await User.countDocuments({ role: 'enterprise' });
         const reports = await SpamReport.countDocuments();
         res.json({ 
-            totalMonthlyRevenue: b2c * 50 + b2b * 500, 
+            totalMonthlyRevenue: b2c * 50 + b2b * 500, // Mock Calc
             totalEnterprises: b2b, 
             totalB2CSubscribers: b2c, 
             spamReports: reports 
@@ -309,6 +344,7 @@ ownerRouter.get('/stats', async (req, res) => {
     } catch(e) { res.json({ success: false }); }
 });
 
+// C. B2B / B2C LISTS
 ownerRouter.get('/subscribers/:type', async (req, res) => {
     const type = req.params.type; 
     const role = type === 'b2b' ? 'enterprise' : 'subscriber';
@@ -316,6 +352,7 @@ ownerRouter.get('/subscribers/:type', async (req, res) => {
     res.json(users);
 });
 
+// D. CATEGORY MANAGEMENT
 ownerRouter.get('/categories', async (req, res) => {
     const cats = await Category.find().sort({ name: 1 });
     if(cats.length === 0) {
@@ -338,6 +375,7 @@ ownerRouter.delete('/categories/:name', async (req, res) => {
     res.json({ success: true });
 });
 
+// E. DIRECTORY
 ownerRouter.get('/directory', async (req, res) => {
     const list = await DirectoryEntry.find().sort({ companyName: 1 });
     res.json(list);
@@ -366,6 +404,7 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
         });
 });
 
+// F. NOTIFICATIONS & FRAUD
 ownerRouter.post('/broadcast', async (req, res) => {
     const { title, body } = req.body;
     await Notification.create({ title, body });
@@ -377,7 +416,7 @@ ownerRouter.get('/fraud-reports', async (req, res) => {
     const reports = await SpamReport.find().sort({ createdAt: -1 }).limit(50);
     const mapped = reports.map(r => ({
         number: r.reportedNumber || r.phoneNumber,
-        reportedNumber: r.reportedNumber || r.phoneNumber,
+        reportedNumber: r.reportedNumber || r.phoneNumber, // Ensure frontend key matches
         reason: r.reason,
         comments: r.comments,
         createdAt: r.createdAt
@@ -385,25 +424,13 @@ ownerRouter.get('/fraud-reports', async (req, res) => {
     res.json(mapped);
 });
 
-// --- RESTORED SUSPEND ROUTE ---
-ownerRouter.post('/suspend-number', async (req, res) => {
-    const { number } = req.body;
-    await SuspiciousNumber.findOneAndUpdate(
-        { phoneNumber: number },
-        { status: 'Blocked', reportCount: 999 },
-        { upsert: true }
-    );
-    res.json({ success: true });
-});
-// ------------------------------
-
 app.use('/api/v1/owner', ownerRouter);
 
 // ==========================================
-// 8. SERVE FRONTEND
+// 7. SERVE FRONTEND
 // ==========================================
 app.get('/', (req, res) => { res.sendFile(path.join(__dirname, 'public.html')); });
 app.get('/admin', (req, res) => { res.sendFile(path.join(__dirname, 'admin.html')); });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.9 Server Running on Port ${PORT}`); }); 
+server.listen(PORT, () => { console.log(`🚀 V12.8 Server Running on Port ${PORT}`); });
