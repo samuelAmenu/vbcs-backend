@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.15 (CLOUD-SAFE UPLOAD FIX)
+   VBCS MASTER SERVER V12.14 (FULL MERGE + UPLOAD FIX)
    ================================================== */
 
 require('dotenv').config();
@@ -12,17 +12,19 @@ const http = require('http');
 const { Server } = require("socket.io"); 
 const multer = require('multer');       
 const csv = require('csv-parser');      
-const fs = require('fs');
-const os = require('os'); // NEW: For system temp folder
+const fs = require('fs');               
 
 const app = express();
 const server = http.createServer(app); 
 
-// --- FIX: USE SYSTEM TEMP FOLDER ---
-// Instead of creating an 'uploads' folder (which Render might block),
-// we use the system's temporary directory. This is always writable.
-const upload = multer({ dest: os.tmpdir() }); 
-// -----------------------------------
+// --- FIX: AUTO-CREATE UPLOADS FOLDER ---
+// Without this, the Upload button will CRASH the server on Render
+if (!fs.existsSync('uploads')) {
+    fs.mkdirSync('uploads');
+    console.log("📂 Created 'uploads' directory");
+}
+const upload = multer({ dest: 'uploads/' }); 
+// ---------------------------------------
 
 // --- CORS SETTINGS ---
 app.use(cors({
@@ -43,23 +45,34 @@ const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://sami_dbuser:SAMI!ame11
 mongoose.connect(MONGO_URI)
   .then(() => {
       console.log('✅ VBCS Engine: Ready & Connected');
-      initAdmin(); 
+      initAdmin(); // Auto-fix admin account
   })
   .catch(err => console.error('❌ DB Error:', err.message));
 
 // ==========================================
-// SCHEMAS (PRESERVED)
+// SCHEMAS
 // ==========================================
+
+// A. USER
 const userSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true, unique: true, index: true }, 
-    passwordHash: String, salt: String,
+    passwordHash: String,
+    salt: String,
     role: { type: String, enum: ['subscriber', 'enterprise'], default: 'subscriber' }, 
-    companyName: String, fullName: String, email: String, profilePic: String, 
+    companyName: String, 
+    fullName: String,
+    email: String,
+    profilePic: String, 
     circle: [{ phone: String, name: String, status: { type: String, default: 'active' } }],
     savedPlaces: [{ label: String, lat: Number, lng: Number, icon: String }],
     status: { type: String, enum: ['Safe', 'Lost', 'SOS'], default: 'Safe' },
-    lostModeConfig: { message: { type: String, default: "If found, please call 9449." }, audioAlertActive: { type: Boolean, default: false } },
-    otp: String, otpExpires: Date, onboardingStep: { type: Number, default: 0 },
+    lostModeConfig: {
+        message: { type: String, default: "If found, please call 9449." },
+        audioAlertActive: { type: Boolean, default: false }
+    },
+    otp: String,
+    otpExpires: Date,
+    onboardingStep: { type: Number, default: 0 },
     createdAt: { type: Date, default: Date.now },
     location: { lat: Number, lng: Number, speed: Number, updatedAt: Date },
     batteryLevel: { type: Number, default: 100 }
@@ -75,11 +88,12 @@ userSchema.methods.validatePassword = function(password) {
 };
 const User = mongoose.models.User || mongoose.model('User', userSchema);
 
-const Admin = mongoose.models.Admin || mongoose.model('Admin', new mongoose.Schema({ username: String, passwordHash: String, salt: String }));
-// Add setPassword/validatePassword to Admin schema (simplified here for brevity but logic exists in previous versions)
-// ... (Logic is handled inside initAdmin and login route manually if needed, or re-add methods here)
-// Re-adding methods for safety:
-const adminSchema = Admin.schema;
+// B. ADMIN
+const adminSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    passwordHash: String,
+    salt: String
+});
 adminSchema.methods.setPassword = function(password) {
     this.salt = crypto.randomBytes(16).toString('hex');
     this.passwordHash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
@@ -89,99 +103,311 @@ adminSchema.methods.validatePassword = function(password) {
     const hash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
     return this.passwordHash === hash;
 };
+const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
 
+// --- INIT ADMIN (FIXES LOGIN CRASH) ---
 async function initAdmin() {
     const admin = await Admin.findOne({ username: 'admin' });
+    
+    // Case 1: No Admin -> Create it
     if (!admin) {
-        const salt = crypto.randomBytes(16).toString('hex');
-        const hash = crypto.pbkdf2Sync('admin123', salt, 1000, 64, 'sha512').toString('hex');
-        await Admin.create({ username: 'admin', salt, passwordHash: hash });
+        const newAdmin = new Admin({ username: 'admin' });
+        newAdmin.setPassword('admin123');
+        await newAdmin.save();
         console.log("🔒 Default Admin Created");
-    } else if (!admin.salt) {
+    } 
+    // Case 2: Broken Admin (Missing Salt) -> Recreate it
+    else if (!admin.salt || !admin.passwordHash) {
+        console.log("⚠️ Found corrupted Admin (missing salt). Recreating...");
         await Admin.deleteOne({ username: 'admin' });
-        const salt = crypto.randomBytes(16).toString('hex');
-        const hash = crypto.pbkdf2Sync('admin123', salt, 1000, 64, 'sha512').toString('hex');
-        await Admin.create({ username: 'admin', salt, passwordHash: hash });
+        const newAdmin = new Admin({ username: 'admin' });
+        newAdmin.setPassword('admin123');
+        await newAdmin.save();
         console.log("🔒 Admin account repaired.");
     }
 }
 
+// C. OTHERS
 const DirectoryEntry = mongoose.models.DirectoryEntry || mongoose.model('DirectoryEntry', new mongoose.Schema({
     companyName: String, phoneNumber: String, category: String, 
     email: String, officeAddress: String, isVerified: { type: Boolean, default: true },
     status: { type: String, default: 'Active' }
 }));
-const Category = mongoose.models.Category || mongoose.model('Category', new mongoose.Schema({ name: { type: String, unique: true } }));
-const SpamReport = mongoose.models.SpamReport || mongoose.model('SpamReport', new mongoose.Schema({ reportedNumber: String, reason: String, comments: String, createdAt: { type: Date, default: Date.now } }));
-const SuspiciousNumber = mongoose.models.SuspiciousNumber || mongoose.model('SuspiciousNumber', new mongoose.Schema({ phoneNumber: String, reportCount: { type: Number, default: 0 }, status: { type: String, default: 'Warning' } }));
-const Notification = mongoose.models.Notification || mongoose.model('Notification', new mongoose.Schema({ title: String, body: String, date: { type: Date, default: Date.now } }));
 
-// --- SOCKET IO ---
+const Category = mongoose.models.Category || mongoose.model('Category', new mongoose.Schema({
+    name: { type: String, unique: true }
+}));
+
+const SpamReport = mongoose.models.SpamReport || mongoose.model('SpamReport', new mongoose.Schema({
+    reportedNumber: String, reporterPhone: String, reason: String, comments: String, createdAt: { type: Date, default: Date.now }
+}));
+
+const SuspiciousNumber = mongoose.models.SuspiciousNumber || mongoose.model('SuspiciousNumber', new mongoose.Schema({
+    phoneNumber: String, reportCount: { type: Number, default: 0 }, status: { type: String, default: 'Warning' }
+}));
+
+const Notification = mongoose.models.Notification || mongoose.model('Notification', new mongoose.Schema({
+    title: String, body: String, date: { type: Date, default: Date.now }
+}));
+
+// ==========================================
+// REAL-TIME ENGINE
+// ==========================================
 io.on('connection', (socket) => {
     socket.on('join_room', (phone) => { socket.join(phone); });
     socket.on('ping_location', async (data) => {
         try {
-            await User.findOneAndUpdate({ phoneNumber: data.phone }, { location: { lat: data.lat, lng: data.lng, updatedAt: new Date() }, batteryLevel: data.battery });
+            const user = await User.findOneAndUpdate(
+                { phoneNumber: data.phone }, 
+                { location: { lat: data.lat, lng: data.lng, updatedAt: new Date() }, batteryLevel: data.battery },
+                { new: true }
+            );
             socket.broadcast.emit('friend_moved', data);
-        } catch (e) {}
+            if (user && user.status === 'Lost') {
+                socket.emit('command_execute', { 
+                    command: 'ACTIVATE_LOST_MODE', 
+                    message: user.lostModeConfig.message,
+                    playSiren: user.lostModeConfig.audioAlertActive
+                });
+            }
+        } catch (e) { console.error(e); }
     });
     socket.on('trigger_sos', async (data) => {
         const user = await User.findOne({ phoneNumber: data.phone });
-        if(user && user.circle) user.circle.forEach(m => io.to(m.phone).emit('sos_alert', { fromName: user.fullName, lat: data.lat, lng: data.lng }));
+        if(user && user.circle) {
+             user.circle.forEach(member => {
+                 io.to(member.phone).emit('sos_alert', { fromName: user.fullName, lat: data.lat, lng: data.lng });
+             });
+        }
     });
 });
 
-// --- API ROUTES ---
-app.post('/api/v9/auth/otp-request', async (req, res) => { res.json({ success: true, testCode: "123456" }); });
-app.post('/api/v9/auth/otp-verify', async (req, res) => { res.json({ success: true, nextStep: 'home', user: {} }); });
-app.post('/api/v9/auth/login', async (req, res) => {
-    const { phoneNumber, password } = req.body;
-    const user = await User.findOne({ phoneNumber });
-    if(user && user.validatePassword(password)) res.json({ success: true, user });
-    else res.status(400).json({ success: false });
+// ==========================================
+// LEGACY API ROUTES (MOBILE APP)
+// ==========================================
+app.post('/api/v9/auth/otp-request', async (req, res) => {
+    try {
+        const { phoneNumber } = req.body;
+        if (!phoneNumber) return res.status(400).json({ success: false, message: "Phone required" });
+        const otp = "123456"; 
+        let user = await User.findOne({ phoneNumber });
+        if (!user) user = new User({ phoneNumber });
+        user.otp = otp;
+        user.otpExpires = new Date(Date.now() + 5 * 60000); 
+        await user.save();
+        res.json({ success: true, testCode: otp }); 
+    } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-// --- OWNER ROUTES ---
+app.post('/api/v9/auth/otp-verify', async (req, res) => {
+    try {
+        const { phoneNumber, code } = req.body;
+        const user = await User.findOne({ phoneNumber });
+        if (!user || user.otp !== code) return res.status(400).json({ success: false, message: "Invalid OTP" });
+        user.otp = null; 
+        let nextStep = 'home';
+        if (user.onboardingStep < 2 && !user.fullName) nextStep = 'wizard'; 
+        await user.save();
+        const userLite = user.toObject();
+        delete userLite.profilePic; 
+        res.json({ success: true, nextStep, user: userLite });
+    } catch (err) { res.status(500).json({ success: false }); }
+});
+
+app.post('/api/v9/auth/login', async (req, res) => {
+    try {
+        const { phoneNumber, password } = req.body;
+        const user = await User.findOne({ phoneNumber });
+        if (!user) return res.status(400).json({ success: false, message: "User not found" });
+        const isValid = await user.validatePassword(password);
+        if (!isValid) return res.status(400).json({ success: false, message: "Invalid Password" });
+        const userLite = user.toObject();
+        delete userLite.profilePic; 
+        res.json({ success: true, user: userLite });
+    } catch (err) { res.status(500).json({ success: false }); }
+});
+
+app.post('/api/v9/onboarding/personal', async (req, res) => {
+    try {
+        await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { ...req.body, onboardingStep: 4 });
+        res.json({ success: true });
+    } catch(err) { res.status(500).json({ success: false }); }
+});
+
+app.get('/api/v12/lookup/:number', async (req, res) => {
+    const num = req.params.number;
+    const verified = await DirectoryEntry.findOne({ phoneNumber: num });
+    if (verified) return res.json({ status: 'verified', msg: "Verified Enterprise", data: verified });
+    const suspect = await SuspiciousNumber.findOne({ phoneNumber: num });
+    if (suspect && suspect.reportCount >= 10) return res.json({ status: 'danger', reports: suspect.reportCount });
+    res.json({ status: 'unknown' });
+});
+
+app.post('/api/v12/report', async (req, res) => {
+    try {
+        const { reportedNumber } = req.body;
+        await new SpamReport(req.body).save();
+        const count = await SpamReport.countDocuments({ reportedNumber });
+        await SuspiciousNumber.findOneAndUpdate(
+            { phoneNumber: reportedNumber },
+            { reportCount: count, status: count >= 10 ? 'Blocked' : 'Warning' },
+            { upsert: true }
+        );
+        res.json({ success: true });
+    } catch(err) { res.status(500).json({ success: false }); }
+});
+
+app.get('/api/v12/directory/search', async (req, res) => {
+    const regex = new RegExp(req.query.q, 'i');
+    res.json(await DirectoryEntry.find({ $or: [{ companyName: regex }, { category: regex }] }).limit(20));
+});
+
+app.post('/api/v12/guardian/invite/generate', async (req, res) => {
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { inviteCode: code });
+    res.json({ success: true, code });
+});
+
+app.post('/api/v9/guardian/join', async (req, res) => {
+    const { myPhone, inviteCode } = req.body;
+    const target = await User.findOne({ inviteCode });
+    const me = await User.findOne({ phoneNumber: myPhone });
+    if(!target) return res.status(404).json({message: "Invalid Code"});
+    if(!me.circle.some(c=>c.phone===target.phoneNumber)) me.circle.push({phone:target.phoneNumber, name:target.fullName});
+    if(!target.circle.some(c=>c.phone===me.phoneNumber)) target.circle.push({phone:me.phoneNumber, name:me.fullName});
+    await me.save(); await target.save();
+    res.json({ success: true, targetName: target.fullName });
+});
+
+app.get('/api/v9/guardian/circle', async (req, res) => {
+    const me = await User.findOne({ phoneNumber: req.query.phone });
+    if (!me) return res.json({ circle: [] });
+    const phones = me.circle.map(c => c.phone);
+    const members = await User.find({ phoneNumber: { $in: phones } }).select('fullName phoneNumber location profilePic batteryLevel');
+    const data = members.map(u => ({
+        name: u.fullName, phone: u.phoneNumber, lat: u.location?.lat, lng: u.location?.lng, pic: u.profilePic, battery: u.batteryLevel
+    }));
+    res.json({ success: true, circle: data, myCode: me.inviteCode });
+});
+
+// ==========================================
+// 7. NEW: OWNER / ADMIN ROUTES (V1)
+// ==========================================
+// ==========================================
+// MISSING LEGACY ROUTES (Restore these!)
+// ==========================================
+
+// 1. NUMBER LOOKUP (The one causing your 404 error)
+app.get('/api/v12/lookup/:number', async (req, res) => {
+    const num = req.params.number;
+    const verified = await DirectoryEntry.findOne({ phoneNumber: num });
+    if (verified) return res.json({ status: 'verified', msg: "Verified Enterprise", data: verified });
+    
+    const suspect = await SuspiciousNumber.findOne({ phoneNumber: num });
+    if (suspect && suspect.reportCount >= 10) return res.json({ status: 'danger', reports: suspect.reportCount });
+    
+    res.json({ status: 'unknown' });
+});
+
+// 2. REPORT FRAUD
+app.post('/api/v12/report', async (req, res) => {
+    try {
+        const { reportedNumber } = req.body;
+        await new SpamReport(req.body).save();
+        const count = await SpamReport.countDocuments({ reportedNumber });
+        await SuspiciousNumber.findOneAndUpdate(
+            { phoneNumber: reportedNumber },
+            { reportCount: count, status: count >= 10 ? 'Blocked' : 'Warning' },
+            { upsert: true }
+        );
+        res.json({ success: true });
+    } catch(err) { res.status(500).json({ success: false }); }
+});
+
+// 3. SEARCH DIRECTORY
+app.get('/api/v12/directory/search', async (req, res) => {
+    const regex = new RegExp(req.query.q, 'i');
+    res.json(await DirectoryEntry.find({ $or: [{ companyName: regex }, { category: regex }] }).limit(20));
+});
 const ownerRouter = express.Router();
+
 ownerRouter.post('/login', async (req, res) => {
     const { username, password } = req.body;
     const admin = await Admin.findOne({ username });
-    if(!admin) return res.status(401).json({ success:false });
-    const hash = crypto.pbkdf2Sync(password, admin.salt, 1000, 64, 'sha512').toString('hex');
-    if(admin.passwordHash === hash) res.json({ success: true, token: 'session_token' });
-    else res.status(401).json({ success: false });
+    if (!admin || !admin.validatePassword(password)) {
+        return res.status(401).json({ success: false, message: "Invalid Credentials" });
+    }
+    res.json({ success: true, token: 'session_token' });
+});
+
+ownerRouter.post('/change-password', async (req, res) => {
+    const { username, newPassword } = req.body;
+    const admin = await Admin.findOne({ username });
+    if (admin) {
+        admin.setPassword(newPassword);
+        await admin.save();
+        res.json({ success: true, message: "Password Updated" });
+    } else {
+        res.status(404).json({ success: false, message: "Admin not found" });
+    }
 });
 
 ownerRouter.get('/stats', async (req, res) => {
-    const b2c = await User.countDocuments({ role: 'subscriber' });
-    const b2b = await User.countDocuments({ role: 'enterprise' });
-    const reports = await SpamReport.countDocuments();
-    res.json({ totalMonthlyRevenue: b2c*50 + b2b*500, totalEnterprises: b2b, totalB2CSubscribers: b2c, spamReports: reports });
+    try {
+        const b2c = await User.countDocuments({ role: 'subscriber' });
+        const b2b = await User.countDocuments({ role: 'enterprise' });
+        const reports = await SpamReport.countDocuments();
+        res.json({ 
+            totalMonthlyRevenue: b2c * 50 + b2b * 500, 
+            totalEnterprises: b2b, 
+            totalB2CSubscribers: b2c, 
+            spamReports: reports 
+        });
+    } catch(e) { res.json({ success: false }); }
 });
 
 ownerRouter.get('/subscribers/:type', async (req, res) => {
-    const role = req.params.type === 'b2b' ? 'enterprise' : 'subscriber';
-    res.json(await User.find({ role }).sort({ createdAt: -1 }).limit(100));
+    const type = req.params.type; 
+    const role = type === 'b2b' ? 'enterprise' : 'subscriber';
+    const users = await User.find({ role }).sort({ createdAt: -1 }).limit(100);
+    res.json(users);
 });
 
 ownerRouter.get('/categories', async (req, res) => {
     const cats = await Category.find().sort({ name: 1 });
     if(cats.length === 0) {
-        const d = ["Bank", "Hotel", "Embassy", "Transport", "Emergency", "Other"];
-        await Category.insertMany(d.map(n => ({ name: n })));
-        return res.json(d.map(n => ({ name: n })));
+        const defaults = ["Bank", "Hotel", "Embassy", "Transport", "Emergency", "Other"];
+        await Category.insertMany(defaults.map(n => ({ name: n })));
+        return res.json(defaults.map(n => ({ name: n })));
     }
     res.json(cats);
 });
-ownerRouter.post('/categories', async (req, res) => { await Category.create({ name: req.body.name }); res.json({ success: true }); });
-ownerRouter.delete('/categories/:name', async (req, res) => { await Category.deleteOne({ name: req.params.name }); res.json({ success: true }); });
 
-ownerRouter.get('/directory', async (req, res) => { res.json(await DirectoryEntry.find().sort({ companyName: 1 })); });
-ownerRouter.post('/directory-add', async (req, res) => { await DirectoryEntry.create(req.body); res.json({ success: true }); });
+ownerRouter.post('/categories', async (req, res) => {
+    try {
+        await Category.create({ name: req.body.name });
+        res.json({ success: true });
+    } catch(e) { res.status(400).json({ message: "Category exists" }); }
+});
 
-// --- CLOUD SAFE CSV UPLOAD ---
+ownerRouter.delete('/categories/:name', async (req, res) => {
+    await Category.deleteOne({ name: req.params.name });
+    res.json({ success: true });
+});
+
+ownerRouter.get('/directory', async (req, res) => {
+    const list = await DirectoryEntry.find().sort({ companyName: 1 });
+    res.json(list);
+});
+
+ownerRouter.post('/directory-add', async (req, res) => {
+    await DirectoryEntry.create(req.body);
+    res.json({ success: true });
+});
+
+// --- CSV UPLOAD (ROBUST VERSION) ---
 ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
-    if(!req.file) return res.status(400).json({ message: "No file received" });
+    if(!req.file) return res.status(400).json({ message: "No file found" });
     
     const results = [];
     fs.createReadStream(req.file.path)
@@ -195,43 +421,61 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
                     category: row.Category || row.category || 'Other'
                 }));
                 
-                if(entries.length > 0) await DirectoryEntry.insertMany(entries);
-                
-                // Cleanup
-                fs.unlink(req.file.path, (err) => { if(err) console.error("Temp file delete failed", err); });
-                
+                if(entries.length === 0) {
+                     return res.json({ success: false, message: "CSV file was empty or unreadable" });
+                }
+
+                await DirectoryEntry.insertMany(entries);
+                fs.unlinkSync(req.file.path);
                 res.json({ success: true, message: `Imported ${entries.length} items` });
             } catch (e) {
                 console.error(e);
-                res.status(500).json({ message: "DB Error" });
+                res.status(500).json({ message: "Database Error during import" });
             }
         })
         .on('error', (err) => {
+            // CATCHES FILE ERRORS (e.g. Binary/Excel files)
             console.error("CSV Parse Error:", err);
-            res.status(400).json({ message: "File parse error. Use standard CSV." });
+            res.status(400).json({ message: "Invalid CSV file. Please save as .CSV (UTF-8)" });
         });
 });
 
 ownerRouter.post('/broadcast', async (req, res) => {
-    await Notification.create(req.body);
-    io.emit('global_alert', req.body); 
+    const { title, body } = req.body;
+    await Notification.create({ title, body });
+    io.emit('global_alert', { title, body }); 
     res.json({ success: true });
 });
 
 ownerRouter.get('/fraud-reports', async (req, res) => {
     const reports = await SpamReport.find().sort({ createdAt: -1 }).limit(50);
-    res.json(reports.map(r => ({ reportedNumber: r.reportedNumber || r.phoneNumber, reason: r.reason, comments: r.comments, createdAt: r.createdAt })));
+    const mapped = reports.map(r => ({
+        number: r.reportedNumber || r.phoneNumber,
+        reportedNumber: r.reportedNumber || r.phoneNumber,
+        reason: r.reason,
+        comments: r.comments,
+        createdAt: r.createdAt
+    }));
+    res.json(mapped);
 });
 
 ownerRouter.post('/suspend-number', async (req, res) => {
-    await SuspiciousNumber.findOneAndUpdate({ phoneNumber: req.body.number }, { status: 'Blocked', reportCount: 999 }, { upsert: true });
+    const { number } = req.body;
+    await SuspiciousNumber.findOneAndUpdate(
+        { phoneNumber: number },
+        { status: 'Blocked', reportCount: 999 },
+        { upsert: true }
+    );
     res.json({ success: true });
 });
 
 app.use('/api/v1/owner', ownerRouter);
 
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public.html')));
-app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
+// ==========================================
+// 8. SERVE FRONTEND
+// ==========================================
+app.get('/', (req, res) => { res.sendFile(path.join(__dirname, 'public.html')); });
+app.get('/admin', (req, res) => { res.sendFile(path.join(__dirname, 'admin.html')); });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.15 Cloud Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.14 Server Running on Port ${PORT}`); }); 
