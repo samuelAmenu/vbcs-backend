@@ -351,17 +351,29 @@
             const fd = new FormData();
             fd.append('file', file);
             
-            const btn = document.querySelector('#directory-page .btn');
-            const origText = btn.innerText;
-            btn.innerText = "Uploading...";
+            // FIX: Select the specific button inside the Bulk Upload card
+            // (The old code selected the 'Add' button by mistake)
+            const btn = document.querySelector('#directory-page .card:nth-child(3) .btn');
+            const origText = btn ? btn.innerText : "Upload Database";
+            
+            if(btn) btn.innerText = "Uploading...";
             
             try {
                 const res = await fetch(`${API}/directory-upload`, { method:'POST', body:fd });
                 const d = await res.json();
-                alert(d.message);
-                loadDirectory();
-            } catch(e) { alert("Upload Failed"); }
-            btn.innerText = origText;
+                
+                if(res.ok) {
+                    alert(d.message);
+                    loadDirectory();
+                } else {
+                    alert("Server Error: " + (d.message || "Upload crashed"));
+                }
+            } catch(e) { 
+                console.error(e);
+                alert("Upload Failed. Check console for details."); 
+            }
+            
+            if(btn) btn.innerText = origText;
         }
 
         async function sendBroadcast() {
