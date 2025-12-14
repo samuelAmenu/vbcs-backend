@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.10 (AUTO-FIX INVALID ADMIN)
+   VBCS MASTER SERVER V12.14 (FULL MERGE + UPLOAD FIX)
    ================================================== */
 
 require('dotenv').config();
@@ -17,7 +17,16 @@ const fs = require('fs');
 const app = express();
 const server = http.createServer(app); 
 
-// --- 1. FIXED CORS SETTINGS ---
+// --- FIX: AUTO-CREATE UPLOADS FOLDER ---
+// Without this, the Upload button will CRASH the server on Render
+if (!fs.existsSync('uploads')) {
+    fs.mkdirSync('uploads');
+    console.log("📂 Created 'uploads' directory");
+}
+const upload = multer({ dest: 'uploads/' }); 
+// ---------------------------------------
+
+// --- CORS SETTINGS ---
 app.use(cors({
     origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -25,13 +34,12 @@ app.use(cors({
 }));
 
 const io = new Server(server, { cors: { origin: "*" } }); 
-const upload = multer({ dest: 'uploads/' }); 
 
-// 2. MIDDLEWARE
+// MIDDLEWARE
 app.use(express.json({ limit: '50mb' })); 
 app.use(express.static(__dirname)); 
 
-// 3. DATABASE CONNECTION
+// DATABASE CONNECTION
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://sami_dbuser:SAMI!ame11@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
 
 mongoose.connect(MONGO_URI)
@@ -42,7 +50,7 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.error('❌ DB Error:', err.message));
 
 // ==========================================
-// 4. SCHEMAS
+// SCHEMAS
 // ==========================================
 
 // A. USER
@@ -91,13 +99,13 @@ adminSchema.methods.setPassword = function(password) {
     this.passwordHash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
 };
 adminSchema.methods.validatePassword = function(password) {
-    if(!this.salt || !this.passwordHash) return false; // PREVENT CRASH IF CORRUPT
+    if(!this.salt || !this.passwordHash) return false; 
     const hash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
     return this.passwordHash === hash;
 };
 const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
 
-// --- UPDATED INIT ADMIN (FIXES THE CRASH) ---
+// --- INIT ADMIN (FIXES LOGIN CRASH) ---
 async function initAdmin() {
     const admin = await Admin.findOne({ username: 'admin' });
     
@@ -118,7 +126,6 @@ async function initAdmin() {
         console.log("🔒 Admin account repaired.");
     }
 }
-// -------------------------------------------
 
 // C. OTHERS
 const DirectoryEntry = mongoose.models.DirectoryEntry || mongoose.model('DirectoryEntry', new mongoose.Schema({
@@ -144,7 +151,7 @@ const Notification = mongoose.models.Notification || mongoose.model('Notificatio
 }));
 
 // ==========================================
-// 5. REAL-TIME ENGINE
+// REAL-TIME ENGINE
 // ==========================================
 io.on('connection', (socket) => {
     socket.on('join_room', (phone) => { socket.join(phone); });
@@ -176,7 +183,7 @@ io.on('connection', (socket) => {
 });
 
 // ==========================================
-// 6. LEGACY API ROUTES (MOBILE APP)
+// LEGACY API ROUTES (MOBILE APP)
 // ==========================================
 app.post('/api/v9/auth/otp-request', async (req, res) => {
     try {
@@ -362,6 +369,7 @@ ownerRouter.post('/directory-add', async (req, res) => {
     res.json({ success: true });
 });
 
+// --- CSV UPLOAD (CRASH PROOF) ---
 ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
     if(!req.file) return res.status(400).json({ message: "No file found" });
     const results = [];
@@ -418,4 +426,4 @@ app.get('/', (req, res) => { res.sendFile(path.join(__dirname, 'public.html')); 
 app.get('/admin', (req, res) => { res.sendFile(path.join(__dirname, 'admin.html')); });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.10 Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.14 Server Running on Port ${PORT}`); });
