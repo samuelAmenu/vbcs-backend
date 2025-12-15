@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.15 (FINAL POLISHED)
+   VBCS MASTER SERVER V12.19 (FULL LEGACY + SMART UPLOAD)
    ================================================== */
 
 require('dotenv').config();
@@ -13,16 +13,13 @@ const { Server } = require("socket.io");
 const multer = require('multer');       
 const csv = require('csv-parser');      
 const fs = require('fs');               
+const os = require('os'); // Added for Cloud Compatibility
 
 const app = express();
 const server = http.createServer(app); 
 
-// --- FIX: AUTO-CREATE UPLOADS FOLDER ---
-if (!fs.existsSync('uploads')) {
-    fs.mkdirSync('uploads');
-    console.log("📂 Created 'uploads' directory");
-}
-const upload = multer({ dest: 'uploads/' }); 
+// --- FIX: USE SYSTEM TEMP FOLDER ---
+const upload = multer({ dest: os.tmpdir() }); 
 
 // --- CORS SETTINGS ---
 app.use(cors({
@@ -103,21 +100,18 @@ adminSchema.methods.validatePassword = function(password) {
 };
 const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
 
-// --- INIT ADMIN (FIXES LOGIN CRASH) ---
+// --- INIT ADMIN ---
 async function initAdmin() {
     try {
         const admin = await Admin.findOne({ username: 'admin' });
-        
-        // Case 1: No Admin -> Create it
         if (!admin) {
             const newAdmin = new Admin({ username: 'admin' });
             newAdmin.setPassword('admin123');
             await newAdmin.save();
             console.log("🔒 Default Admin Created");
         } 
-        // Case 2: Broken Admin (Missing Salt) -> Recreate it
         else if (!admin.salt || !admin.passwordHash) {
-            console.log("⚠️ Found corrupted Admin (missing salt). Recreating...");
+            console.log("⚠️ Found corrupted Admin. Recreating...");
             await Admin.deleteOne({ username: 'admin' });
             const newAdmin = new Admin({ username: 'admin' });
             newAdmin.setPassword('admin123');
@@ -183,7 +177,7 @@ io.on('connection', (socket) => {
 });
 
 // ==========================================
-// LEGACY API ROUTES (MOBILE APP)
+// LEGACY API ROUTES (MOBILE APP - v9)
 // ==========================================
 app.post('/api/v9/auth/otp-request', async (req, res) => {
     try {
@@ -234,7 +228,35 @@ app.post('/api/v9/onboarding/personal', async (req, res) => {
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
-// --- CORE ROUTES (Deduplicated) ---
+app.post('/api/v12/guardian/invite/generate', async (req, res) => {
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { inviteCode: code });
+    res.json({ success: true, code });
+});
+
+app.post('/api/v9/guardian/join', async (req, res) => {
+    const { myPhone, inviteCode } = req.body;
+    const target = await User.findOne({ inviteCode });
+    const me = await User.findOne({ phoneNumber: myPhone });
+    if(!target) return res.status(404).json({message: "Invalid Code"});
+    if(!me.circle.some(c=>c.phone===target.phoneNumber)) me.circle.push({phone:target.phoneNumber, name:target.fullName});
+    if(!target.circle.some(c=>c.phone===me.phoneNumber)) target.circle.push({phone:me.phoneNumber, name:me.fullName});
+    await me.save(); await target.save();
+    res.json({ success: true, targetName: target.fullName });
+});
+
+app.get('/api/v9/guardian/circle', async (req, res) => {
+    const me = await User.findOne({ phoneNumber: req.query.phone });
+    if (!me) return res.json({ circle: [] });
+    const phones = me.circle.map(c => c.phone);
+    const members = await User.find({ phoneNumber: { $in: phones } }).select('fullName phoneNumber location profilePic batteryLevel');
+    const data = members.map(u => ({
+        name: u.fullName, phone: u.phoneNumber, lat: u.location?.lat, lng: u.location?.lng, pic: u.profilePic, battery: u.batteryLevel
+    }));
+    res.json({ success: true, circle: data, myCode: me.inviteCode });
+});
+
+// --- CORE ROUTES (v12) ---
 app.get('/api/v12/lookup/:number', async (req, res) => {
     const num = req.params.number;
     const verified = await DirectoryEntry.findOne({ phoneNumber: num });
@@ -263,34 +285,6 @@ app.post('/api/v12/report', async (req, res) => {
 app.get('/api/v12/directory/search', async (req, res) => {
     const regex = new RegExp(req.query.q, 'i');
     res.json(await DirectoryEntry.find({ $or: [{ companyName: regex }, { category: regex }] }).limit(20));
-});
-
-app.post('/api/v12/guardian/invite/generate', async (req, res) => {
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    await User.findOneAndUpdate({ phoneNumber: req.body.phoneNumber }, { inviteCode: code });
-    res.json({ success: true, code });
-});
-
-app.post('/api/v9/guardian/join', async (req, res) => {
-    const { myPhone, inviteCode } = req.body;
-    const target = await User.findOne({ inviteCode });
-    const me = await User.findOne({ phoneNumber: myPhone });
-    if(!target) return res.status(404).json({message: "Invalid Code"});
-    if(!me.circle.some(c=>c.phone===target.phoneNumber)) me.circle.push({phone:target.phoneNumber, name:target.fullName});
-    if(!target.circle.some(c=>c.phone===me.phoneNumber)) target.circle.push({phone:me.phoneNumber, name:me.fullName});
-    await me.save(); await target.save();
-    res.json({ success: true, targetName: target.fullName });
-});
-
-app.get('/api/v9/guardian/circle', async (req, res) => {
-    const me = await User.findOne({ phoneNumber: req.query.phone });
-    if (!me) return res.json({ circle: [] });
-    const phones = me.circle.map(c => c.phone);
-    const members = await User.find({ phoneNumber: { $in: phones } }).select('fullName phoneNumber location profilePic batteryLevel');
-    const data = members.map(u => ({
-        name: u.fullName, phone: u.phoneNumber, lat: u.location?.lat, lng: u.location?.lng, pic: u.profilePic, battery: u.batteryLevel
-    }));
-    res.json({ success: true, circle: data, myCode: me.inviteCode });
 });
 
 // ==========================================
@@ -379,7 +373,7 @@ ownerRouter.post('/directory-add', async (req, res) => {
     res.json({ success: true });
 });
 
-// --- CSV UPLOAD (ROBUST VERSION) ---
+// --- CSV UPLOAD (CLOUD SAFE + DUPLICATE HANDLING) ---
 ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
     if(!req.file) return res.status(400).json({ message: "No file found" });
     
@@ -399,12 +393,21 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
                      return res.json({ success: false, message: "CSV file was empty or unreadable" });
                 }
 
-                await DirectoryEntry.insertMany(entries);
+                // FIX: ordered: false prevents crash on duplicates
+                await DirectoryEntry.insertMany(entries, { ordered: false });
+                
                 fs.unlinkSync(req.file.path);
                 res.json({ success: true, message: `Imported ${entries.length} items` });
             } catch (e) {
-                console.error(e);
-                res.status(500).json({ message: "Database Error during import" });
+                // Handle Partial Success (Some inserted, some duplicates)
+                if (e.writeErrors) {
+                    const inserted = e.nInserted || (entries.length - e.writeErrors.length);
+                    fs.unlink(req.file.path, ()=>{});
+                    res.json({ success: true, message: `Imported ${inserted} items. (Skipped duplicates)` });
+                } else {
+                    console.error(e);
+                    res.status(500).json({ message: "Database Error: " + e.message });
+                }
             }
         })
         .on('error', (err) => {
@@ -469,4 +472,4 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.15 Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.19 Server Running on Port ${PORT}`); });
