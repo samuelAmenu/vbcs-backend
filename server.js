@@ -381,13 +381,13 @@ ownerRouter.post('/directory-add', async (req, res) => {
     res.json({ success: true });
 });
 
-// --- CSV UPLOAD (RAM MODE - FIXES 502) ---
-// We process the file in MEMORY (RAM) instead of DISK to prevent crashes
+// --- CSV UPLOAD (RAM MODE - FIXES 502/503) ---
 ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
+    // 1. Check if file exists
     if(!req.file) return res.status(400).json({ message: "No file found" });
     
-    // Convert RAM Buffer to Stream
-    const stream = Readable.from(req.file.buffer.toString());
+    // 2. Create Stream from Buffer (Correct Way)
+    const stream = Readable.from(req.file.buffer.toString('utf8')); // Added 'utf8' for safety
     const results = [];
 
     stream
@@ -395,25 +395,26 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
         .on('data', (data) => results.push(data))
         .on('end', async () => {
             try {
+                // 3. Map Data
                 const entries = results.map(row => ({
                     companyName: row.Name || row.companyName || 'Unknown',
                     phoneNumber: row.Phone || row.phoneNumber || '000',
                     category: row.Category || row.category || 'Other'
                 }));
                 
-                if(entries.length === 0) return res.json({ success: false, message: "CSV file was empty or unreadable" });
+                if(entries.length === 0) return res.json({ success: false, message: "CSV file empty" });
 
-                // ordered: false skips duplicates
+                // 4. Insert with Duplicate Skip
                 await DirectoryEntry.insertMany(entries, { ordered: false });
                 res.json({ success: true, message: `Imported ${entries.length} items` });
             } catch (e) {
-                // Partial Success Handling
+                // 5. Handle Partial Success
                 if (e.writeErrors) {
                     const inserted = entries.length - e.writeErrors.length;
                     res.json({ success: true, message: `Imported ${inserted} items. (Skipped duplicates)` });
                 } else {
-                    console.error(e);
-                    res.status(500).json({ message: "Database Error: " + e.message });
+                    console.error("DB Error:", e); // Log real error to console
+                    res.status(500).json({ message: "Database Error" });
                 }
             }
         })
