@@ -1,7 +1,8 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.24 (FULL LEGACY + RAM UPLOAD)
-   - Restoration: All 470+ lines of V9/V12 routes
-   - Fix: RAM-based Zero-Copy Upload (No 502/503 Crash)
+   VBCS MASTER SERVER V12.26 (FULL LEGACY + SCOPE FIX)
+   - Restore: All 480+ lines of V9/V12 routes
+   - Fix: "entries is not defined" error in Upload
+   - Fix: 503 Crash (RAM Mode)
    ================================================== */
 
 require('dotenv').config();
@@ -381,23 +382,25 @@ ownerRouter.post('/directory-add', async (req, res) => {
     res.json({ success: true });
 });
 
-// --- CSV UPLOAD (RAM MODE - ZERO COPY) ---
-// This is the FIX for the 502/503 Crash
+// --- CSV UPLOAD (RAM MODE + SCOPE FIX) ---
 ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
     // 1. Check if file exists
     if(!req.file) return res.status(400).json({ message: "No file found" });
     
-    // 2. Create Stream from Buffer (The Safe Way)
+    // 2. Create Stream from Buffer (Correct Way)
     const stream = Readable.from(req.file.buffer.toString('utf8'));
     const results = [];
+    
+    // 3. Declare 'entries' outside to fix Scope Error
+    let entries = [];
 
     stream
         .pipe(csv())
         .on('data', (data) => results.push(data))
         .on('end', async () => {
             try {
-                // 3. Map Data
-                const entries = results.map(row => ({
+                // 4. Map Data
+                entries = results.map(row => ({
                     companyName: row.Name || row.companyName || 'Unknown',
                     phoneNumber: row.Phone || row.phoneNumber || '000',
                     category: row.Category || row.category || 'Other'
@@ -405,16 +408,16 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
                 
                 if(entries.length === 0) return res.json({ success: false, message: "CSV file empty" });
 
-                // 4. Insert with Duplicate Skip
+                // 5. Insert with Duplicate Skip
                 await DirectoryEntry.insertMany(entries, { ordered: false });
                 res.json({ success: true, message: `Imported ${entries.length} items` });
             } catch (e) {
-                // 5. Handle Partial Success
+                // 6. Handle Partial Success (Now 'entries' is visible!)
                 if (e.writeErrors) {
                     const inserted = entries.length - e.writeErrors.length;
                     res.json({ success: true, message: `Imported ${inserted} items. (Skipped duplicates)` });
                 } else {
-                    console.error("DB Error:", e); // Log real error to console
+                    console.error("DB Error:", e);
                     res.status(500).json({ message: "Database Error" });
                 }
             }
@@ -481,4 +484,4 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.24 Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.26 Server Running on Port ${PORT}`); });
