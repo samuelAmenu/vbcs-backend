@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VBCS Admin (Recovery Mode)</title>
+    <title>VBCS Admin (Final)</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root { --primary: #1a1f36; --accent: #009639; --bg: #f4f6f8; }
@@ -13,8 +13,8 @@
         .menu { flex: 1; padding-top: 20px; }
         .nav-link { padding: 15px 25px; color: #aaa; cursor: pointer; display: flex; gap: 10px; align-items: center; text-decoration: none; }
         .nav-link:hover, .nav-link.active { background: #333; color: white; border-left: 4px solid var(--accent); }
-        .main { flex: 1; display: flex; flex-direction: column; position: relative; }
-        .content-area { padding: 30px; overflow-y: auto; flex: 1; padding-bottom: 200px; }
+        .main { flex: 1; display: flex; flex-direction: column; }
+        .content-area { padding: 30px; overflow-y: auto; flex: 1; }
         .page { display: none; }
         .page.active { display: block; }
         
@@ -30,32 +30,18 @@
         .input-group { display: flex; gap: 10px; margin-bottom: 15px; }
         input, select, textarea { padding: 10px; border: 1px solid #ddd; border-radius: 5px; flex: 1; }
         .btn { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; }
-        
-        #login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #111; z-index: 999; display: flex; justify-content: center; align-items: center; }
-        .login-box { background: white; padding: 40px; border-radius: 10px; width: 300px; text-align: center; }
-        
-        /* DEBUG CONSOLE */
-        #debug-console {
-            position: fixed; bottom: 0; left: 260px; right: 0; height: 150px;
-            background: #222; color: #0f0; font-family: monospace; font-size: 12px;
-            padding: 10px; overflow-y: auto; border-top: 2px solid #444; z-index: 1000;
+        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .btn-danger { background: #dc3545; }
+
+        /* Status Bar */
+        #status-bar { 
+            position: fixed; bottom: 0; left: 260px; right: 0; 
+            background: #333; color: white; padding: 10px; font-size: 12px; 
+            font-family: monospace; border-top: 2px solid #009639;
         }
-        .log-entry { margin-bottom: 4px; border-bottom: 1px solid #333; }
-        .log-err { color: #ff5555; font-weight: bold; }
     </style>
 </head>
 <body>
-
-    <div id="login-overlay">
-        <div class="login-box">
-            <h2>VBCS Admin</h2>
-            <p>Recovery Mode</p>
-            <input type="text" id="user" placeholder="Username">
-            <input type="password" id="pass" placeholder="Password" style="margin-top:10px;">
-            <button class="btn" onclick="handleLogin()" style="width:100%; margin-top:15px;">Secure Login</button>
-            <p id="login-msg" style="color:red; font-size:13px; margin-top:10px;"></p>
-        </div>
-    </div>
 
     <div class="sidebar">
         <div class="brand">VBCS COMMAND</div>
@@ -64,7 +50,6 @@
             <a class="nav-link" onclick="nav('b2c')"><i class="fas fa-users"></i> B2C Subscribers</a>
             <a class="nav-link" onclick="nav('b2b')"><i class="fas fa-building"></i> B2B Enterprises</a>
             <a class="nav-link" onclick="nav('directory')"><i class="fas fa-book"></i> Directory</a>
-            <a class="nav-link" onclick="nav('fraud')"><i class="fas fa-shield-alt"></i> Fraud Reports</a>
             <a class="nav-link" onclick="nav('settings')"><i class="fas fa-cog"></i> Settings</a>
         </div>
     </div>
@@ -74,7 +59,7 @@
             <div id="dashboard-page" class="page active">
                 <h1>System Overview</h1>
                 <div class="card-grid">
-                    <div class="card"><h3>Revenue</h3><div class="val" id="d-rev">$0</div></div>
+                    <div class="card"><h3>Revenue</h3><div class="val" id="d-rev">Loading...</div></div>
                     <div class="card"><h3>Subscribers</h3><div class="val" id="d-users">0</div></div>
                     <div class="card"><h3>Enterprises</h3><div class="val" id="d-ent">0</div></div>
                 </div>
@@ -82,13 +67,13 @@
 
             <div id="b2c-page" class="page">
                 <h1>Subscribers (B2C)</h1>
-                <button class="btn" onclick="loadUsers('b2b')" style="margin-bottom:10px;">Refresh</button>
+                <button class="btn" onclick="loadUsers('b2c')" style="margin-bottom:10px;">Refresh List</button>
                 <table id="b2c-table"><thead><tr><th>Name</th><th>Phone</th><th>Status</th><th>Joined</th></tr></thead><tbody></tbody></table>
             </div>
 
             <div id="b2b-page" class="page">
                 <h1>Enterprises (B2B)</h1>
-                <button class="btn" onclick="loadUsers('b2b')" style="margin-bottom:10px;">Refresh</button>
+                <button class="btn" onclick="loadUsers('b2b')" style="margin-bottom:10px;">Refresh List</button>
                 <table id="b2b-table"><thead><tr><th>Company</th><th>Phone</th><th>Role</th><th>Joined</th></tr></thead><tbody></tbody></table>
             </div>
 
@@ -101,101 +86,47 @@
                 </div>
                 <table id="dir-table"><thead><tr><th>Name</th><th>Phone</th><th>Category</th></tr></thead><tbody></tbody></table>
             </div>
-            
-             <div id="fraud-page" class="page">
-                <h1>Fraud Intelligence</h1>
-                <table id="fraud-table"><thead><tr><th>Target Number</th><th>Reason</th><th>Reporter</th><th>Action</th></tr></thead><tbody></tbody></table>
-            </div>
 
             <div id="settings-page" class="page">
-                <h1>Administrator Settings</h1>
+                <h1>Settings</h1>
                 <div class="card">
                     <h3>Manage Categories</h3>
                     <div class="input-group">
-                        <input id="new-cat" placeholder="New Category Name">
-                        <button class="btn" onclick="addCategory()">Add Category</button>
+                        <input id="new-cat" placeholder="Category Name">
+                        <button class="btn" onclick="addCategory()">Add</button>
                     </div>
                     <div id="cat-list"></div>
                 </div>
-                 <div class="card">
-                    <h3>Security</h3>
-                    <div class="input-group">
-                        <input type="password" id="new-pass" placeholder="New Admin Password">
-                        <button class="btn btn-danger" onclick="changePass()">Update Password</button>
-                    </div>
-                </div>
             </div>
         </div>
-
-        <div id="debug-console">
-            <div><strong>SYSTEM LOG (Errors will appear here)</strong></div>
-        </div>
+        <div id="status-bar">System Ready.</div>
     </div>
 
     <script>
-        // --- 1. CRASH DETECTOR (Must be at the top) ---
-        window.addEventListener('error', function(event) {
-            const msg = `CRITICAL ERROR: ${event.message} at line ${event.lineno}`;
-            alert(msg);
-            const box = document.getElementById('debug-console');
-            if(box) box.innerHTML += `<div class="log-entry log-err">${msg}</div>`;
-        });
-
-        // --- 2. CONFIG ---
-        const API = 'https://vbcs-backend-1.onrender.com/api/v1/owner';
-        let currentUser = '';
-
-        function log(msg, type='info') {
-            const box = document.getElementById('debug-console');
-            if(box) {
-                const div = document.createElement('div');
-                div.className = 'log-entry ' + (type==='error'?'log-err':'');
-                div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
-                box.appendChild(div);
-                box.scrollTop = box.scrollHeight;
-            }
+        // 1. USE RELATIVE PATH (Prevents CORS & URL errors)
+        const API = '/api/v1/owner';
+        
+        function setStatus(msg) {
+            document.getElementById('status-bar').innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
             console.log(msg);
         }
 
-        log("System initialized. Waiting for user input...");
-
-        // --- 3. AUTH ---
-        async function handleLogin() {
-            const u = document.getElementById('user').value;
-            const p = document.getElementById('pass').value;
-            const btn = document.querySelector('#login-overlay button');
-            
-            log(`Attempting login for: ${u}`);
-            btn.innerText = "Checking...";
-            
+        // 2. TIMEOUT WRAPPER (Detects "Hanging" requests)
+        async function fetchWithTimeout(url, options = {}) {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), 8000); // 8 second timeout
             try {
-                const res = await fetch(`${API}/login`, { 
-                    method:'POST', 
-                    headers:{'Content-Type':'application/json'}, 
-                    body:JSON.stringify({username:u, password:p}) 
-                });
-                
-                const d = await res.json();
-                
-                if(d.success) {
-                    log("Login Success!");
-                    document.getElementById('login-overlay').style.display = 'none';
-                    currentUser = u;
-                    loadStats(); 
-                } else {
-                    log(`Login Failed: ${d.message}`, 'error');
-                    document.getElementById('login-msg').innerText = d.message;
-                    btn.innerText = "Secure Login";
-                }
-            } catch(e) { 
-                log(`Network Error: ${e.message}`, 'error');
-                btn.innerText = "Secure Login";
-                alert("Cannot connect to server. Check your internet.");
+                const response = await fetch(url, { ...options, signal: controller.signal });
+                clearTimeout(id);
+                return response;
+            } catch (error) {
+                clearTimeout(id);
+                throw error;
             }
         }
 
+        // --- NAVIGATION ---
         function nav(page) {
-            log(`Navigating to ${page}`);
             document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
             document.getElementById(`${page}-page`).classList.add('active');
             
@@ -205,27 +136,25 @@
             if(page === 'b2c') loadUsers('b2c');
             if(page === 'b2b') loadUsers('b2b');
             if(page === 'directory') loadDirectory();
-            if(page === 'fraud') loadFraud();
         }
 
-        // --- 4. LOADERS ---
+        // --- DATA LOADERS ---
         async function loadUsers(type) {
-            log(`Loading ${type} users...`);
+            setStatus(`Loading ${type} users...`);
             const tbody = document.querySelector(`#${type}-table tbody`);
             tbody.innerHTML = '<tr><td colspan="4">Loading...</td></tr>';
-            
+
             try {
-                const res = await fetch(`${API}/subscribers/${type}`);
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const res = await fetchWithTimeout(`${API}/subscribers/${type}`);
+                if (!res.ok) throw new Error(`Server Error: ${res.status}`);
                 const d = await res.json();
-                
-                log(`Found ${d.length} users.`);
-                
-                if(!Array.isArray(d) || d.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4">No data found.</td></tr>';
+
+                if (!Array.isArray(d) || d.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4">No users found.</td></tr>';
+                    setStatus(`Loaded 0 users.`);
                     return;
                 }
-                
+
                 tbody.innerHTML = d.map(u => `
                     <tr>
                         <td>${u.fullName || u.companyName || 'Unknown'}</td>
@@ -233,122 +162,102 @@
                         <td>${u.role}</td>
                         <td>${new Date(u.createdAt).toLocaleDateString()}</td>
                     </tr>`).join('');
-            } catch(e) { 
-                log(`Error: ${e.message}`, 'error');
-                tbody.innerHTML = `<tr><td colspan="4" style="color:red">Error loading data</td></tr>`; 
+                setStatus(`Loaded ${d.length} users successfully.`);
+
+            } catch(e) {
+                handleError(e, tbody);
             }
         }
 
         async function loadDirectory() {
-            log("Loading directory...");
+            setStatus("Loading directory...");
             const tbody = document.querySelector('#dir-table tbody');
             try {
-                const res = await fetch(`${API}/directory`);
+                const res = await fetchWithTimeout(`${API}/directory`);
                 const d = await res.json();
-                log(`Found ${d.length} directory entries`);
                 tbody.innerHTML = d.map(i => `<tr><td>${i.companyName}</td><td>${i.phoneNumber}</td><td>${i.category}</td></tr>`).join('');
-            } catch(e) { log(`Directory Error: ${e.message}`, 'error'); }
-        }
-        
-         async function loadFraud() {
-            const tbody = document.querySelector('#fraud-table tbody');
-            try {
-                const res = await fetch(`${API}/fraud-reports`);
-                const d = await res.json();
-                tbody.innerHTML = d.map(i => `
-                    <tr>
-                        <td style="color:#d32f2f; font-weight:bold;">${i.reportedNumber}</td>
-                        <td>${i.reason}</td>
-                        <td>${i.comments || '-'}</td>
-                        <td><button class="btn btn-danger" style="padding:5px 10px; font-size:12px;" onclick="suspend('${i.reportedNumber}')">Suspend</button></td>
-                    </tr>`).join('');
-            } catch(e) {}
+                setStatus("Directory loaded.");
+            } catch(e) { setStatus("Directory load error: " + e.message); }
         }
 
-        async function loadStats() {
-             try {
-                const res = await fetch(`${API}/stats`);
-                const d = await res.json();
-                document.getElementById('d-rev').innerText = `$${(d.totalMonthlyRevenue||0).toLocaleString()}`;
-                document.getElementById('d-users').innerText = d.totalB2CSubscribers || 0;
-                document.getElementById('d-ent').innerText = d.totalEnterprises || 0;
-            } catch(e) {}
-        }
-        
-        async function suspend(num) {
-            if(!confirm(`Permanently suspend ${num}?`)) return;
-            await fetch(`${API}/suspend-number`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ number: num })
-            });
-            alert("Number Suspended");
-            loadFraud();
-        }
-        
-         async function addCategory() {
-            const name = document.getElementById('new-cat').value;
-            if(!name) return;
-            await fetch(`${API}/categories`, { 
-                method:'POST', 
-                headers:{'Content-Type':'application/json'}, 
-                body:JSON.stringify({name}) 
-            });
-            document.getElementById('new-cat').value = '';
-            alert("Category Added");
-        }
-        
-        async function changePass() {
-            const newPass = document.getElementById('new-pass').value;
-            if(!newPass) return alert("Enter password");
-            const res = await fetch(`${API}/change-password`, { 
-                method:'POST', 
-                headers:{'Content-Type':'application/json'}, 
-                body:JSON.stringify({ username: currentUser, newPassword: newPass }) 
-            });
-            const d = await res.json();
-            alert(d.message);
-        }
-
-        // --- 5. UPLOAD FUNCTION ---
+        // --- UPLOAD FUNCTION ---
         async function uploadCsv(btn) {
             const input = document.getElementById('csv-file');
             const file = input.files[0];
             
-            if(!file) {
-                log("No file selected", 'error');
-                return alert("Select a file first");
-            }
+            if(!file) return alert("Please select a file first.");
             
-            log(`Uploading: ${file.name}`);
+            setStatus(`Uploading ${file.name}...`);
             const fd = new FormData();
             fd.append('file', file);
             
             const origText = btn.innerText;
             btn.innerText = "Uploading...";
             btn.disabled = true;
-            
+
             try {
-                const res = await fetch(`${API}/directory-upload`, { method:'POST', body:fd });
+                const res = await fetchWithTimeout(`${API}/directory-upload`, { method: 'POST', body: fd });
                 const d = await res.json();
-                
-                log(`Server says: ${d.message}`);
                 
                 if(res.ok) {
                     alert(d.message);
-                    input.value = ''; 
+                    input.value = '';
                     loadDirectory();
+                    setStatus("Upload Successful!");
                 } else {
-                    alert("Error: " + d.message);
+                    alert("Server Error: " + d.message);
+                    setStatus("Upload Rejected by Server.");
                 }
-            } catch(e) { 
-                log(`Upload Crash: ${e.message}`, 'error');
-                alert("Connection failed."); 
+            } catch(e) {
+                handleError(e);
+                alert("Upload Failed. Check Status Bar.");
             }
-            
+
             btn.innerText = origText;
             btn.disabled = false;
         }
+
+        // --- SETTINGS ---
+        async function addCategory() {
+            const name = document.getElementById('new-cat').value;
+            if(!name) return;
+            setStatus("Adding category...");
+            try {
+                await fetchWithTimeout(`${API}/categories`, { 
+                    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name}) 
+                });
+                document.getElementById('new-cat').value = '';
+                setStatus("Category Added.");
+            } catch(e) { handleError(e); }
+        }
+
+        // --- ERROR HANDLER ---
+        function handleError(e, tbody = null) {
+            let msg = e.message;
+            if (e.name === 'AbortError') {
+                msg = "TIMEOUT! Check MongoDB IP Whitelist (Network Access).";
+            } else if (msg.includes("Failed to fetch")) {
+                msg = "Connection Refused. Is server running?";
+            }
+            
+            setStatus(`ERROR: ${msg}`);
+            console.error(e);
+            
+            if(tbody) tbody.innerHTML = `<tr><td colspan="4" style="color:red; font-weight:bold;">${msg}</td></tr>`;
+        }
+
+        // Init
+        setStatus("System Ready. Waiting for command.");
+        // Try loading stats to test connection immediately
+        fetchWithTimeout(`${API}/stats`)
+            .then(r => r.json())
+            .then(d => {
+                document.getElementById('d-rev').innerText = `$${d.totalMonthlyRevenue||0}`;
+                document.getElementById('d-users').innerText = d.totalB2CSubscribers||0;
+                document.getElementById('d-ent').innerText = d.totalEnterprises||0;
+                setStatus("Connected to Server.");
+            })
+            .catch(e => handleError(e));
     </script>
 </body>
 </html>
