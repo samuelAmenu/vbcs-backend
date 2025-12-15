@@ -1,5 +1,5 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.14 (FULL MERGE + UPLOAD FIX)
+   VBCS MASTER SERVER V12.15 (FINAL POLISHED)
    ================================================== */
 
 require('dotenv').config();
@@ -18,13 +18,11 @@ const app = express();
 const server = http.createServer(app); 
 
 // --- FIX: AUTO-CREATE UPLOADS FOLDER ---
-// Without this, the Upload button will CRASH the server on Render
 if (!fs.existsSync('uploads')) {
     fs.mkdirSync('uploads');
     console.log("📂 Created 'uploads' directory");
 }
 const upload = multer({ dest: 'uploads/' }); 
-// ---------------------------------------
 
 // --- CORS SETTINGS ---
 app.use(cors({
@@ -107,24 +105,26 @@ const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
 
 // --- INIT ADMIN (FIXES LOGIN CRASH) ---
 async function initAdmin() {
-    const admin = await Admin.findOne({ username: 'admin' });
-    
-    // Case 1: No Admin -> Create it
-    if (!admin) {
-        const newAdmin = new Admin({ username: 'admin' });
-        newAdmin.setPassword('admin123');
-        await newAdmin.save();
-        console.log("🔒 Default Admin Created");
-    } 
-    // Case 2: Broken Admin (Missing Salt) -> Recreate it
-    else if (!admin.salt || !admin.passwordHash) {
-        console.log("⚠️ Found corrupted Admin (missing salt). Recreating...");
-        await Admin.deleteOne({ username: 'admin' });
-        const newAdmin = new Admin({ username: 'admin' });
-        newAdmin.setPassword('admin123');
-        await newAdmin.save();
-        console.log("🔒 Admin account repaired.");
-    }
+    try {
+        const admin = await Admin.findOne({ username: 'admin' });
+        
+        // Case 1: No Admin -> Create it
+        if (!admin) {
+            const newAdmin = new Admin({ username: 'admin' });
+            newAdmin.setPassword('admin123');
+            await newAdmin.save();
+            console.log("🔒 Default Admin Created");
+        } 
+        // Case 2: Broken Admin (Missing Salt) -> Recreate it
+        else if (!admin.salt || !admin.passwordHash) {
+            console.log("⚠️ Found corrupted Admin (missing salt). Recreating...");
+            await Admin.deleteOne({ username: 'admin' });
+            const newAdmin = new Admin({ username: 'admin' });
+            newAdmin.setPassword('admin123');
+            await newAdmin.save();
+            console.log("🔒 Admin account repaired.");
+        }
+    } catch (e) { console.error("Admin Init Error:", e.message); }
 }
 
 // C. OTHERS
@@ -234,12 +234,15 @@ app.post('/api/v9/onboarding/personal', async (req, res) => {
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
+// --- CORE ROUTES (Deduplicated) ---
 app.get('/api/v12/lookup/:number', async (req, res) => {
     const num = req.params.number;
     const verified = await DirectoryEntry.findOne({ phoneNumber: num });
     if (verified) return res.json({ status: 'verified', msg: "Verified Enterprise", data: verified });
+    
     const suspect = await SuspiciousNumber.findOne({ phoneNumber: num });
     if (suspect && suspect.reportCount >= 10) return res.json({ status: 'danger', reports: suspect.reportCount });
+    
     res.json({ status: 'unknown' });
 });
 
@@ -291,44 +294,8 @@ app.get('/api/v9/guardian/circle', async (req, res) => {
 });
 
 // ==========================================
-// 7. NEW: OWNER / ADMIN ROUTES (V1)
+// 7. OWNER / ADMIN ROUTES (V1)
 // ==========================================
-// ==========================================
-// MISSING LEGACY ROUTES (Restore these!)
-// ==========================================
-
-// 1. NUMBER LOOKUP (The one causing your 404 error)
-app.get('/api/v12/lookup/:number', async (req, res) => {
-    const num = req.params.number;
-    const verified = await DirectoryEntry.findOne({ phoneNumber: num });
-    if (verified) return res.json({ status: 'verified', msg: "Verified Enterprise", data: verified });
-    
-    const suspect = await SuspiciousNumber.findOne({ phoneNumber: num });
-    if (suspect && suspect.reportCount >= 10) return res.json({ status: 'danger', reports: suspect.reportCount });
-    
-    res.json({ status: 'unknown' });
-});
-
-// 2. REPORT FRAUD
-app.post('/api/v12/report', async (req, res) => {
-    try {
-        const { reportedNumber } = req.body;
-        await new SpamReport(req.body).save();
-        const count = await SpamReport.countDocuments({ reportedNumber });
-        await SuspiciousNumber.findOneAndUpdate(
-            { phoneNumber: reportedNumber },
-            { reportCount: count, status: count >= 10 ? 'Blocked' : 'Warning' },
-            { upsert: true }
-        );
-        res.json({ success: true });
-    } catch(err) { res.status(500).json({ success: false }); }
-});
-
-// 3. SEARCH DIRECTORY
-app.get('/api/v12/directory/search', async (req, res) => {
-    const regex = new RegExp(req.query.q, 'i');
-    res.json(await DirectoryEntry.find({ $or: [{ companyName: regex }, { category: regex }] }).limit(20));
-});
 const ownerRouter = express.Router();
 
 ownerRouter.post('/login', async (req, res) => {
@@ -366,20 +333,17 @@ ownerRouter.get('/stats', async (req, res) => {
     } catch(e) { res.json({ success: false }); }
 });
 
-// --- FIX: ROBUST SUBSCRIBER FETCH ---
 ownerRouter.get('/subscribers/:type', async (req, res) => {
     try {
         const role = req.params.type === 'b2b' ? 'enterprise' : 'subscriber';
-        // Check if DB is connected
         if (mongoose.connection.readyState !== 1) {
-            return res.json([]); // Return empty list if DB is connecting
+            return res.json([]); 
         }
-        
         const users = await User.find({ role }).sort({ createdAt: -1 }).limit(100);
-        res.json(users || []); // Ensure we always send an array
+        res.json(users || []); 
     } catch (e) {
         console.error("Fetch Error:", e);
-        res.json([]); // Return empty array on error (prevents frontend crash)
+        res.json([]); 
     }
 });
 
@@ -444,7 +408,6 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
             }
         })
         .on('error', (err) => {
-            // CATCHES FILE ERRORS (e.g. Binary/Excel files)
             console.error("CSV Parse Error:", err);
             res.status(400).json({ message: "Invalid CSV file. Please save as .CSV (UTF-8)" });
         });
@@ -482,10 +445,28 @@ ownerRouter.post('/suspend-number', async (req, res) => {
 app.use('/api/v1/owner', ownerRouter);
 
 // ==========================================
-// 8. SERVE FRONTEND
+// 8. SERVE FRONTEND (AND 404 CATCH-ALL)
 // ==========================================
-app.get('/', (req, res) => { res.sendFile(path.join(__dirname, 'public.html')); });
-app.get('/admin', (req, res) => { res.sendFile(path.join(__dirname, 'admin.html')); });
+app.get('/', (req, res) => { 
+    if (fs.existsSync(path.join(__dirname, 'public.html'))) {
+        res.sendFile(path.join(__dirname, 'public.html'));
+    } else {
+        res.send("<h1>Server is Running (public.html missing)</h1>");
+    }
+});
+
+app.get('/admin', (req, res) => { 
+    if (fs.existsSync(path.join(__dirname, 'admin.html'))) {
+        res.sendFile(path.join(__dirname, 'admin.html')); 
+    } else {
+        res.status(404).send("<h1>Admin Panel Not Found</h1><p>Please make sure admin.html is in the root folder.</p>");
+    }
+});
+
+// Catch-All for unknown routes
+app.get('*', (req, res) => {
+    res.status(404).send("<h1>404 Not Found</h1>");
+});
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.14 Server Running on Port ${PORT}`); }); 
+server.listen(PORT, () => { console.log(`🚀 V12.15 Server Running on Port ${PORT}`); });
