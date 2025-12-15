@@ -222,23 +222,40 @@
         }
 
         async function loadUsers(type) {
+            console.log("Loading users for:", type); // Debug Log
+            
             const tbody = document.querySelector(`#${type}-table tbody`);
-            tbody.innerHTML = '<tr><td colspan="4">Loading...</td></tr>';
+            if (!tbody) return console.error("Table not found:", type);
+            
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#666;">Loading data...</td></tr>';
+            
             try {
                 const res = await fetch(`${API}/subscribers/${type}`);
+                
+                // Safety check: Did the server say OK?
+                if (!res.ok) throw new Error(`Server Error: ${res.status}`);
+                
                 const d = await res.json();
-                if(d.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4">No users found.</td></tr>';
+                
+                // Safety check: Is the data actually a list?
+                if (!Array.isArray(d) || d.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">No users found in database.</td></tr>';
                     return;
                 }
+                
+                // Render the list
                 tbody.innerHTML = d.map(u => `
                     <tr>
-                        <td>${u.fullName || u.companyName || 'Unknown'}</td>
+                        <td><strong>${u.fullName || u.companyName || 'Unknown'}</strong></td>
                         <td>${u.phoneNumber}</td>
-                        <td>${u.role}</td>
+                        <td><span class="cat-tag">${u.role}</span></td>
                         <td>${new Date(u.createdAt).toLocaleDateString()}</td>
                     </tr>`).join('');
-            } catch(e) { tbody.innerHTML = '<tr><td colspan="4">Error loading data</td></tr>'; }
+                    
+            } catch(e) { 
+                console.error("Load Failed:", e);
+                tbody.innerHTML = `<tr><td colspan="4" style="color:red; text-align:center;">Error loading data. <br><small>${e.message}</small></td></tr>`; 
+            }
         }
 
         async function loadDirectory() {
