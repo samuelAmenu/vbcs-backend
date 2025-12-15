@@ -381,8 +381,8 @@ ownerRouter.post('/directory-add', async (req, res) => {
     res.json({ success: true });
 });
 
-// --- CSV UPLOAD (RAM MODE) ---
-// Fixes 502/503 Errors by avoiding Disk Write
+// --- CSV UPLOAD (RAM MODE - FIXES 502) ---
+// We process the file in MEMORY (RAM) instead of DISK to prevent crashes
 ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
     if(!req.file) return res.status(400).json({ message: "No file found" });
     
