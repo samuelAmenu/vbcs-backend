@@ -1,5 +1,7 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.19 (FULL LEGACY + SMART UPLOAD)
+   VBCS MASTER SERVER V12.22 (RAM UPLOAD + FULL LEGACY)
+   - Fixes 502 Bad Gateway on Cloud
+   - Includes ALL Legacy Routes
    ================================================== */
 
 require('dotenv').config();
@@ -13,13 +15,16 @@ const { Server } = require("socket.io");
 const multer = require('multer');       
 const csv = require('csv-parser');      
 const fs = require('fs');               
-const os = require('os'); // Added for Cloud Compatibility
+const { Readable } = require('stream'); // REQUIRED FOR RAM UPLOAD
 
 const app = express();
 const server = http.createServer(app); 
 
-// --- FIX: USE SYSTEM TEMP FOLDER ---
-const upload = multer({ dest: os.tmpdir() }); 
+// --- FIX: USE MEMORY STORAGE (No Disk Access = No 502 Error) ---
+const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB Limit
+}); 
 
 // --- CORS SETTINGS ---
 app.use(cors({
@@ -104,12 +109,15 @@ const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
 async function initAdmin() {
     try {
         const admin = await Admin.findOne({ username: 'admin' });
+        
+        // Case 1: No Admin -> Create it
         if (!admin) {
             const newAdmin = new Admin({ username: 'admin' });
             newAdmin.setPassword('admin123');
             await newAdmin.save();
             console.log("🔒 Default Admin Created");
         } 
+        // Case 2: Broken Admin (Missing Salt) -> Recreate it
         else if (!admin.salt || !admin.passwordHash) {
             console.log("⚠️ Found corrupted Admin. Recreating...");
             await Admin.deleteOne({ username: 'admin' });
@@ -373,12 +381,16 @@ ownerRouter.post('/directory-add', async (req, res) => {
     res.json({ success: true });
 });
 
-// --- CSV UPLOAD (CLOUD SAFE + DUPLICATE HANDLING) ---
+// --- CSV UPLOAD (RAM MODE) ---
+// Fixes 502/503 Errors by avoiding Disk Write
 ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
     if(!req.file) return res.status(400).json({ message: "No file found" });
     
+    // Convert RAM Buffer to Stream
+    const stream = Readable.from(req.file.buffer.toString());
     const results = [];
-    fs.createReadStream(req.file.path)
+
+    stream
         .pipe(csv())
         .on('data', (data) => results.push(data))
         .on('end', async () => {
@@ -389,20 +401,15 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
                     category: row.Category || row.category || 'Other'
                 }));
                 
-                if(entries.length === 0) {
-                     return res.json({ success: false, message: "CSV file was empty or unreadable" });
-                }
+                if(entries.length === 0) return res.json({ success: false, message: "CSV file was empty or unreadable" });
 
-                // FIX: ordered: false prevents crash on duplicates
+                // ordered: false skips duplicates
                 await DirectoryEntry.insertMany(entries, { ordered: false });
-                
-                fs.unlinkSync(req.file.path);
                 res.json({ success: true, message: `Imported ${entries.length} items` });
             } catch (e) {
-                // Handle Partial Success (Some inserted, some duplicates)
+                // Partial Success Handling
                 if (e.writeErrors) {
-                    const inserted = e.nInserted || (entries.length - e.writeErrors.length);
-                    fs.unlink(req.file.path, ()=>{});
+                    const inserted = entries.length - e.writeErrors.length;
                     res.json({ success: true, message: `Imported ${inserted} items. (Skipped duplicates)` });
                 } else {
                     console.error(e);
@@ -412,7 +419,7 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
         })
         .on('error', (err) => {
             console.error("CSV Parse Error:", err);
-            res.status(400).json({ message: "Invalid CSV file. Please save as .CSV (UTF-8)" });
+            res.status(400).json({ message: "Invalid CSV file." });
         });
 });
 
@@ -472,4 +479,4 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.19 Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.22 Server Running on Port ${PORT}`); });
