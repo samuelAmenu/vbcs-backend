@@ -366,11 +366,21 @@ ownerRouter.get('/stats', async (req, res) => {
     } catch(e) { res.json({ success: false }); }
 });
 
+// --- FIX: ROBUST SUBSCRIBER FETCH ---
 ownerRouter.get('/subscribers/:type', async (req, res) => {
-    const type = req.params.type; 
-    const role = type === 'b2b' ? 'enterprise' : 'subscriber';
-    const users = await User.find({ role }).sort({ createdAt: -1 }).limit(100);
-    res.json(users);
+    try {
+        const role = req.params.type === 'b2b' ? 'enterprise' : 'subscriber';
+        // Check if DB is connected
+        if (mongoose.connection.readyState !== 1) {
+            return res.json([]); // Return empty list if DB is connecting
+        }
+        
+        const users = await User.find({ role }).sort({ createdAt: -1 }).limit(100);
+        res.json(users || []); // Ensure we always send an array
+    } catch (e) {
+        console.error("Fetch Error:", e);
+        res.json([]); // Return empty array on error (prevents frontend crash)
+    }
 });
 
 ownerRouter.get('/categories', async (req, res) => {
