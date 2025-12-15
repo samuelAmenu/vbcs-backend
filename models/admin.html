@@ -222,7 +222,7 @@
         }
 
         async function loadUsers(type) {
-            console.log("Loading users for:", type); // Debug Log
+            console.log("Loading users for:", type); 
             
             const tbody = document.querySelector(`#${type}-table tbody`);
             if (!tbody) return console.error("Table not found:", type);
@@ -232,18 +232,15 @@
             try {
                 const res = await fetch(`${API}/subscribers/${type}`);
                 
-                // Safety check: Did the server say OK?
                 if (!res.ok) throw new Error(`Server Error: ${res.status}`);
                 
                 const d = await res.json();
                 
-                // Safety check: Is the data actually a list?
                 if (!Array.isArray(d) || d.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">No users found in database.</td></tr>';
                     return;
                 }
                 
-                // Render the list
                 tbody.innerHTML = d.map(u => `
                     <tr>
                         <td><strong>${u.fullName || u.companyName || 'Unknown'}</strong></td>
@@ -298,11 +295,9 @@
             const res = await fetch(`${API}/categories`);
             const cats = await res.json();
             
-            // Populate Dropdown
             const sel = document.getElementById('dir-cat');
             sel.innerHTML = cats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
             
-            // Populate Manager List
             document.getElementById('cat-list').innerHTML = cats.map(c => `
                 <span class="cat-tag">
                     ${c.name} <i class="fas fa-times" onclick="delCat('${c.name}')"></i>
@@ -361,7 +356,7 @@
             loadDirectory();
         }
 
-        // --- FIX: ROBUST UPLOAD FUNCTION ---
+        // --- UPLOAD FUNCTION (CRASH PROOF) ---
         async function uploadCsv(btn) {
             const input = document.getElementById('csv-file');
             const file = input.files[0];
