@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VBCS Command Center</title>
+    <title>VBCS Admin (Diagnostic Mode)</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root { --primary: #1a1f36; --accent: #009639; --bg: #f4f6f8; }
@@ -17,8 +17,8 @@
         .nav-link:hover, .nav-link.active { background: #333; color: white; border-left: 4px solid var(--accent); }
         
         /* Main Content */
-        .main { flex: 1; display: flex; flex-direction: column; }
-        .content-area { padding: 30px; overflow-y: auto; flex: 1; }
+        .main { flex: 1; display: flex; flex-direction: column; position: relative; }
+        .content-area { padding: 30px; overflow-y: auto; flex: 1; padding-bottom: 200px; } /* Space for logger */
         .page { display: none; }
         .page.active { display: block; animation: fadeIn 0.3s; }
         
@@ -44,9 +44,19 @@
         #login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #111; z-index: 999; display: flex; justify-content: center; align-items: center; }
         .login-box { background: white; padding: 40px; border-radius: 10px; width: 300px; text-align: center; }
         
-        /* Categories Tag Style */
+        /* Categories Tag */
         .cat-tag { background:#eee; padding:5px 10px; border-radius:15px; font-size:12px; display:inline-flex; align-items:center; margin:0 5px 5px 0; }
         .cat-tag i { margin-left:8px; color:#dc3545; cursor:pointer; }
+
+        /* --- DIAGNOSTIC LOGGER (NEW) --- */
+        #debug-console {
+            position: fixed; bottom: 0; left: 260px; right: 0; height: 150px;
+            background: #222; color: #0f0; font-family: monospace; font-size: 12px;
+            padding: 10px; overflow-y: auto; border-top: 2px solid #444; z-index: 1000;
+        }
+        .log-entry { margin-bottom: 4px; border-bottom: 1px solid #333; padding-bottom: 2px; }
+        .log-err { color: #ff5555; }
+        .log-warn { color: #ffaa00; }
     </style>
 </head>
 <body>
@@ -55,9 +65,9 @@
         <div class="login-box">
             <h2>VBCS Admin</h2>
             <p style="color:#666; margin-bottom:20px;">Owner Portal</p>
-            <input type="text" id="user" placeholder="Username" style="width:100%; box-sizing:border-box; margin-bottom:10px;">
-            <input type="password" id="pass" placeholder="Password" style="width:100%; box-sizing:border-box; margin-bottom:10px;">
-            <button class="btn" onclick="handleLogin()" style="width:100%;">Secure Login</button>
+            <input type="text" id="user" placeholder="Username">
+            <input type="password" id="pass" placeholder="Password" style="margin-top:10px;">
+            <button class="btn" onclick="handleLogin()" style="width:100%; margin-top:15px;">Secure Login</button>
             <p id="login-msg" style="color:red; font-size:13px; margin-top:10px;"></p>
         </div>
     </div>
@@ -87,28 +97,28 @@
                     <div class="card"><h3>Enterprises</h3><div class="val" id="d-ent">0</div></div>
                     <div class="card"><h3>Reports</h3><div class="val" id="d-rep">0</div></div>
                 </div>
-                
                 <div class="card">
-                    <h3>Broadcast Notification (Push to App)</h3>
-                    <input id="notif-title" placeholder="Title (e.g. System Maintenance)" style="margin-bottom:10px; width:100%; box-sizing:border-box;">
-                    <textarea id="notif-body" placeholder="Message to all users..." style="margin-bottom:10px; width:100%; box-sizing:border-box; resize:vertical;" rows="3"></textarea>
-                    <button class="btn" onclick="sendBroadcast()">Send Broadcast</button>
+                    <h3>Broadcast Notification</h3>
+                    <input id="notif-title" placeholder="Title" style="width:100%; box-sizing:border-box; margin-bottom:10px;">
+                    <textarea id="notif-body" placeholder="Message..." style="width:100%; box-sizing:border-box;" rows="3"></textarea>
+                    <button class="btn" onclick="sendBroadcast()" style="margin-top:10px;">Send Broadcast</button>
                 </div>
             </div>
 
             <div id="b2c-page" class="page">
                 <h1>Subscribers (B2C)</h1>
+                <button class="btn" onclick="loadUsers('b2c')" style="margin-bottom:10px;">Refresh List</button>
                 <table id="b2c-table"><thead><tr><th>Name</th><th>Phone</th><th>Status</th><th>Joined</th></tr></thead><tbody></tbody></table>
             </div>
 
             <div id="b2b-page" class="page">
                 <h1>Enterprises (B2B)</h1>
+                <button class="btn" onclick="loadUsers('b2b')" style="margin-bottom:10px;">Refresh List</button>
                 <table id="b2b-table"><thead><tr><th>Company</th><th>Phone</th><th>Role</th><th>Joined</th></tr></thead><tbody></tbody></table>
             </div>
 
             <div id="directory-page" class="page">
                 <h1>Directory Manager</h1>
-                
                 <div class="card">
                     <h3>Add Single Entry</h3>
                     <div class="input-group">
@@ -118,16 +128,14 @@
                         <button class="btn" onclick="addDir()">Add</button>
                     </div>
                 </div>
-
                 <div class="card">
                     <h3>Bulk Upload CSV</h3>
-                    <p style="font-size:12px; color:#666; margin-top:0;">Columns: Name, Phone, Category</p>
+                    <p style="font-size:12px; color:#666; margin-top:0;">1. Select File (CSV) -> 2. Click Upload</p>
                     <div class="input-group">
                         <input type="file" id="csv-file" accept="*/*">
-                        <button class="btn" onclick="uploadCsv(this)" style="margin-top: 10px;">Upload Database</button>
+                        <button class="btn" onclick="uploadCsv(this)">Upload Database</button>
                     </div>
                 </div>
-
                 <table id="dir-table"><thead><tr><th>Name</th><th>Phone</th><th>Category</th></tr></thead><tbody></tbody></table>
             </div>
 
@@ -138,16 +146,14 @@
 
             <div id="settings-page" class="page">
                 <h1>Administrator Settings</h1>
-                
                 <div class="card">
                     <h3>Manage Categories</h3>
                     <div class="input-group">
-                        <input id="new-cat" placeholder="New Category Name (e.g. Cinema)">
+                        <input id="new-cat" placeholder="New Category Name">
                         <button class="btn" onclick="addCategory()">Add Category</button>
                     </div>
                     <div id="cat-list"></div>
                 </div>
-
                 <div class="card">
                     <h3>Security</h3>
                     <div class="input-group">
@@ -158,18 +164,34 @@
             </div>
 
         </div>
+
+        <div id="debug-console">
+            <div><strong>SYSTEM LOG (Check here for errors)</strong></div>
+        </div>
     </div>
 
     <script>
-        // TARGETING THE LIVE SERVER
         const API = 'https://vbcs-backend-1.onrender.com/api/v1/owner';
         let currentUser = '';
+
+        // --- LOGGER FUNCTION ---
+        function log(msg, type = 'info') {
+            const box = document.getElementById('debug-console');
+            const div = document.createElement('div');
+            div.className = 'log-entry ' + (type === 'error' ? 'log-err' : '');
+            div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            box.appendChild(div);
+            box.scrollTop = box.scrollHeight;
+            console.log(msg); // Also log to normal console
+        }
 
         // --- AUTH ---
         async function handleLogin() {
             const u = document.getElementById('user').value;
             const p = document.getElementById('pass').value;
             const btn = document.querySelector('#login-overlay button');
+            
+            log(`Attempting login for user: ${u}...`);
             btn.innerText = "Checking...";
             
             try {
@@ -178,25 +200,31 @@
                     headers:{'Content-Type':'application/json'}, 
                     body:JSON.stringify({username:u, password:p}) 
                 });
+                
+                log(`Login Server Response: ${res.status}`);
                 const d = await res.json();
                 
                 if(d.success) {
+                    log("Login Success!");
                     document.getElementById('login-overlay').style.display = 'none';
                     currentUser = u;
                     loadStats(); 
                     loadCategories(); 
                 } else {
+                    log(`Login Failed: ${d.message}`, 'error');
                     document.getElementById('login-msg').innerText = d.message;
                     btn.innerText = "Secure Login";
                 }
             } catch(e) { 
-                document.getElementById('login-msg').innerText = "Connection Error. Is server running?";
+                log(`Network Error during login: ${e.message}`, 'error');
+                document.getElementById('login-msg').innerText = "Network Error. Check System Log.";
                 btn.innerText = "Secure Login";
             }
         }
 
         // --- NAV ---
         function nav(page) {
+            log(`Navigating to: ${page}`);
             document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
             document.getElementById(`${page}-page`).classList.add('active');
             
@@ -210,107 +238,112 @@
         }
 
         // --- LOADERS ---
-        async function loadStats() {
-            try {
-                const res = await fetch(`${API}/stats`);
-                const d = await res.json();
-                document.getElementById('d-rev').innerText = `$${d.totalMonthlyRevenue.toLocaleString()}`;
-                document.getElementById('d-users').innerText = d.totalB2CSubscribers;
-                document.getElementById('d-ent').innerText = d.totalEnterprises;
-                document.getElementById('d-rep').innerText = d.spamReports;
-            } catch(e) {}
-        }
-
         async function loadUsers(type) {
-            console.log("Loading users for:", type); 
-            
+            log(`Fetching ${type} users...`);
             const tbody = document.querySelector(`#${type}-table tbody`);
-            if (!tbody) return console.error("Table not found:", type);
-            
-            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#666;">Loading data...</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4">Loading...</td></tr>';
             
             try {
                 const res = await fetch(`${API}/subscribers/${type}`);
+                log(`User Fetch Status: ${res.status}`);
                 
-                if (!res.ok) throw new Error(`Server Error: ${res.status}`);
+                if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
                 
                 const d = await res.json();
+                log(`Received ${d.length} users.`);
                 
-                if (!Array.isArray(d) || d.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">No users found in database.</td></tr>';
+                if(d.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4">No users found in database.</td></tr>';
                     return;
                 }
                 
                 tbody.innerHTML = d.map(u => `
                     <tr>
-                        <td><strong>${u.fullName || u.companyName || 'Unknown'}</strong></td>
+                        <td>${u.fullName || u.companyName || 'Unknown'}</td>
                         <td>${u.phoneNumber}</td>
-                        <td><span class="cat-tag">${u.role}</span></td>
+                        <td>${u.role}</td>
                         <td>${new Date(u.createdAt).toLocaleDateString()}</td>
                     </tr>`).join('');
-                    
             } catch(e) { 
-                console.error("Load Failed:", e);
-                tbody.innerHTML = `<tr><td colspan="4" style="color:red; text-align:center;">Error loading data. <br><small>${e.message}</small></td></tr>`; 
+                log(`Error loading users: ${e.message}`, 'error');
+                tbody.innerHTML = `<tr><td colspan="4" style="color:red">Error: ${e.message}</td></tr>`; 
             }
         }
 
         async function loadDirectory() {
-            const tbody = document.querySelector('#dir-table tbody');
+            log("Loading directory...");
             try {
                 const res = await fetch(`${API}/directory`);
                 const d = await res.json();
+                log(`Directory loaded: ${d.length} entries`);
+                const tbody = document.querySelector('#dir-table tbody');
                 tbody.innerHTML = d.map(i => `<tr><td>${i.companyName}</td><td>${i.phoneNumber}</td><td>${i.category}</td></tr>`).join('');
-            } catch(e) {}
+            } catch(e) { log(`Directory Load Error: ${e.message}`, 'error'); }
         }
 
-        async function loadFraud() {
-            const tbody = document.querySelector('#fraud-table tbody');
+        // --- UPLOAD FUNCTION (DIAGNOSTIC) ---
+        async function uploadCsv(btn) {
+            const input = document.getElementById('csv-file');
+            const file = input.files[0];
+            
+            if(!file) {
+                log("Error: No file selected.", 'error');
+                return alert("Select a file first");
+            }
+            
+            log(`Starting upload for file: ${file.name} (${file.size} bytes)`);
+            
+            const fd = new FormData();
+            fd.append('file', file);
+            
+            const origText = btn.innerText;
+            btn.innerText = "Uploading...";
+            btn.disabled = true;
+            
             try {
-                const res = await fetch(`${API}/fraud-reports`);
+                log(`Sending request to: ${API}/directory-upload`);
+                const res = await fetch(`${API}/directory-upload`, { method:'POST', body:fd });
+                log(`Upload Response Status: ${res.status}`);
+                
                 const d = await res.json();
-                tbody.innerHTML = d.map(i => `
-                    <tr>
-                        <td style="color:#d32f2f; font-weight:bold;">${i.reportedNumber}</td>
-                        <td>${i.reason}</td>
-                        <td>${i.comments || '-'}</td>
-                        <td><button class="btn btn-danger" style="padding:5px 10px; font-size:12px;" onclick="suspend('${i.reportedNumber}')">Suspend</button></td>
-                    </tr>`).join('');
-            } catch(e) {}
+                log(`Server Message: ${d.message}`);
+                
+                if(res.ok) {
+                    alert("Success: " + d.message);
+                    input.value = ''; 
+                    loadDirectory();
+                } else {
+                    alert("Error: " + d.message);
+                    log(`Upload Logic Error: ${d.message}`, 'error');
+                }
+            } catch(e) { 
+                log(`CRITICAL UPLOAD FAILURE: ${e.message}`, 'error');
+                alert("Upload Failed. See System Log at bottom."); 
+            }
+            
+            btn.innerText = origText;
+            btn.disabled = false;
         }
 
-        async function suspend(num) {
-            if(!confirm(`Permanently suspend ${num}?`)) return;
-            await fetch(`${API}/suspend-number`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ number: num })
-            });
-            alert("Number Suspended");
-            loadFraud();
-        }
-
-        // --- SETTINGS ---
+        // --- SETTINGS & PRIVILEGES ---
         async function loadCategories() {
-            const res = await fetch(`${API}/categories`);
-            const cats = await res.json();
-            
-            const sel = document.getElementById('dir-cat');
-            sel.innerHTML = cats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
-            
-            document.getElementById('cat-list').innerHTML = cats.map(c => `
-                <span class="cat-tag">
-                    ${c.name} <i class="fas fa-times" onclick="delCat('${c.name}')"></i>
-                </span>`).join('');
+            try {
+                const res = await fetch(`${API}/categories`);
+                const cats = await res.json();
+                const sel = document.getElementById('dir-cat');
+                if(sel) sel.innerHTML = cats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+                
+                const list = document.getElementById('cat-list');
+                if(list) list.innerHTML = cats.map(c => `<span class="cat-tag">${c.name} <i class="fas fa-times" onclick="delCat('${c.name}')"></i></span>`).join('');
+            } catch(e) { log("Failed to load categories", 'error'); }
         }
 
         async function addCategory() {
             const name = document.getElementById('new-cat').value;
             if(!name) return;
+            log(`Adding category: ${name}`);
             await fetch(`${API}/categories`, { 
-                method:'POST', 
-                headers:{'Content-Type':'application/json'}, 
-                body:JSON.stringify({name}) 
+                method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name}) 
             });
             document.getElementById('new-cat').value = '';
             loadCategories();
@@ -318,96 +351,14 @@
 
         async function delCat(name) {
             if(confirm('Delete category?')) {
+                log(`Deleting category: ${name}`);
                 await fetch(`${API}/categories/${name}`, { method:'DELETE' });
                 loadCategories();
             }
         }
-
-        async function changePass() {
-            const newPass = document.getElementById('new-pass').value;
-            if(!newPass) return alert("Enter password");
-            const res = await fetch(`${API}/change-password`, { 
-                method:'POST', 
-                headers:{'Content-Type':'application/json'}, 
-                body:JSON.stringify({ username: currentUser, newPassword: newPass }) 
-            });
-            const d = await res.json();
-            alert(d.message);
-        }
-
-        // --- ACTIONS ---
-        async function addDir() {
-            const name = document.getElementById('dir-name').value;
-            const phone = document.getElementById('dir-phone').value;
-            if(!name || !phone) return alert("Fill all fields");
-
-            await fetch(`${API}/directory-add`, { 
-                method:'POST', 
-                headers:{'Content-Type':'application/json'}, 
-                body:JSON.stringify({
-                    companyName: name,
-                    phoneNumber: phone,
-                    category: document.getElementById('dir-cat').value
-                })
-            });
-            alert("Entry Added");
-            document.getElementById('dir-name').value = '';
-            document.getElementById('dir-phone').value = '';
-            loadDirectory();
-        }
-
-        // --- UPLOAD FUNCTION (CRASH PROOF) ---
-        async function uploadCsv(btn) {
-            const input = document.getElementById('csv-file');
-            const file = input.files[0];
-            
-            if(!file) return alert("Select a CSV file first");
-            
-            const fd = new FormData();
-            fd.append('file', file);
-            
-            // Visual Feedback
-            const origText = btn.innerText;
-            btn.innerText = "Uploading...";
-            btn.disabled = true;
-            btn.style.opacity = "0.7";
-            
-            try {
-                const res = await fetch(`${API}/directory-upload`, { method:'POST', body:fd });
-                const d = await res.json();
-                
-                if(res.ok) {
-                    alert(d.message);
-                    input.value = ''; // Clear input
-                    loadDirectory();
-                } else {
-                    alert("Server Error: " + (d.message || "Upload crashed"));
-                }
-            } catch(e) { 
-                console.error(e);
-                alert("Upload Failed. Check connection."); 
-            }
-            
-            // Reset Button
-            btn.innerText = origText;
-            btn.disabled = false;
-            btn.style.opacity = "1";
-        }
-
-        async function sendBroadcast() {
-            const title = document.getElementById('notif-title').value;
-            const body = document.getElementById('notif-body').value;
-            if(!title) return alert("Title required");
-            
-            await fetch(`${API}/broadcast`, { 
-                method:'POST', 
-                headers:{'Content-Type':'application/json'}, 
-                body:JSON.stringify({title, body}) 
-            });
-            alert("Notification Sent to all devices!");
-            document.getElementById('notif-title').value = '';
-            document.getElementById('notif-body').value = '';
-        }
+        
+        // Load stats on startup if already valid (optional, usually waits for login)
+        // loadStats(); 
     </script>
 </body>
 </html>
