@@ -3,21 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VBCS Admin (Final)</title>
+    <title>VBCS Command Center</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         :root { --primary: #1a1f36; --accent: #009639; --bg: #f4f6f8; }
         body { font-family: 'Segoe UI', sans-serif; background: var(--bg); margin: 0; display: flex; height: 100vh; overflow: hidden; }
+        
+        /* Sidebar */
         .sidebar { width: 260px; background: #111; color: white; display: flex; flex-direction: column; }
         .brand { padding: 25px; font-size: 20px; font-weight: bold; border-bottom: 1px solid #333; }
         .menu { flex: 1; padding-top: 20px; }
         .nav-link { padding: 15px 25px; color: #aaa; cursor: pointer; display: flex; gap: 10px; align-items: center; text-decoration: none; }
         .nav-link:hover, .nav-link.active { background: #333; color: white; border-left: 4px solid var(--accent); }
+        
+        /* Main Content */
         .main { flex: 1; display: flex; flex-direction: column; }
         .content-area { padding: 30px; overflow-y: auto; flex: 1; }
         .page { display: none; }
-        .page.active { display: block; }
+        .page.active { display: block; animation: fadeIn 0.3s; }
         
+        @keyframes fadeIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
+
+        /* Components */
         .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); margin-bottom: 20px; }
         .card h3 { margin: 0 0 10px 0; font-size: 12px; color: #666; text-transform: uppercase; }
@@ -28,20 +35,32 @@
         th { background: #f8f9fa; font-size: 12px; text-transform: uppercase; color: #555; }
         
         .input-group { display: flex; gap: 10px; margin-bottom: 15px; }
-        input, select, textarea { padding: 10px; border: 1px solid #ddd; border-radius: 5px; flex: 1; }
+        input, select, textarea { padding: 10px; border: 1px solid #ddd; border-radius: 5px; flex: 1; font-family: inherit; }
         .btn { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; }
-        .btn:disabled { background: #ccc; cursor: not-allowed; }
+        .btn:hover { opacity: 0.9; }
         .btn-danger { background: #dc3545; }
-
-        /* Status Bar */
-        #status-bar { 
-            position: fixed; bottom: 0; left: 260px; right: 0; 
-            background: #333; color: white; padding: 10px; font-size: 12px; 
-            font-family: monospace; border-top: 2px solid #009639;
-        }
+        
+        /* Login */
+        #login-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #111; z-index: 999; display: flex; justify-content: center; align-items: center; }
+        .login-box { background: white; padding: 40px; border-radius: 10px; width: 300px; text-align: center; }
+        
+        /* Categories Tag Style */
+        .cat-tag { background:#eee; padding:5px 10px; border-radius:15px; font-size:12px; display:inline-flex; align-items:center; margin:0 5px 5px 0; }
+        .cat-tag i { margin-left:8px; color:#dc3545; cursor:pointer; }
     </style>
 </head>
 <body>
+
+    <div id="login-overlay">
+        <div class="login-box">
+            <h2>VBCS Admin</h2>
+            <p style="color:#666; margin-bottom:20px;">Owner Portal</p>
+            <input type="text" id="user" placeholder="Username" style="width:100%; box-sizing:border-box; margin-bottom:10px;">
+            <input type="password" id="pass" placeholder="Password" style="width:100%; box-sizing:border-box; margin-bottom:10px;">
+            <button class="btn" onclick="handleLogin()" style="width:100%;">Secure Login</button>
+            <p id="login-msg" style="color:red; font-size:13px; margin-top:10px;"></p>
+        </div>
+    </div>
 
     <div class="sidebar">
         <div class="brand">VBCS COMMAND</div>
@@ -50,82 +69,133 @@
             <a class="nav-link" onclick="nav('b2c')"><i class="fas fa-users"></i> B2C Subscribers</a>
             <a class="nav-link" onclick="nav('b2b')"><i class="fas fa-building"></i> B2B Enterprises</a>
             <a class="nav-link" onclick="nav('directory')"><i class="fas fa-book"></i> Directory</a>
-            <a class="nav-link" onclick="nav('settings')"><i class="fas fa-cog"></i> Settings</a>
+            <a class="nav-link" onclick="nav('fraud')"><i class="fas fa-shield-alt"></i> Fraud Reports</a>
+            <a class="nav-link" onclick="nav('settings')"><i class="fas fa-cog"></i> Settings & Admin</a>
+            <div style="flex:1"></div>
+            <a class="nav-link" onclick="location.reload()" style="color:#ef5350;"><i class="fas fa-sign-out-alt"></i> Logout</a>
         </div>
     </div>
 
     <div class="main">
         <div class="content-area">
+
             <div id="dashboard-page" class="page active">
                 <h1>System Overview</h1>
                 <div class="card-grid">
-                    <div class="card"><h3>Revenue</h3><div class="val" id="d-rev">Loading...</div></div>
+                    <div class="card"><h3>Total Revenue</h3><div class="val" id="d-rev">$0</div></div>
                     <div class="card"><h3>Subscribers</h3><div class="val" id="d-users">0</div></div>
                     <div class="card"><h3>Enterprises</h3><div class="val" id="d-ent">0</div></div>
+                    <div class="card"><h3>Reports</h3><div class="val" id="d-rep">0</div></div>
+                </div>
+                
+                <div class="card">
+                    <h3>Broadcast Notification (Push to App)</h3>
+                    <input id="notif-title" placeholder="Title (e.g. System Maintenance)" style="margin-bottom:10px; width:100%; box-sizing:border-box;">
+                    <textarea id="notif-body" placeholder="Message to all users..." style="margin-bottom:10px; width:100%; box-sizing:border-box; resize:vertical;" rows="3"></textarea>
+                    <button class="btn" onclick="sendBroadcast()">Send Broadcast</button>
                 </div>
             </div>
 
             <div id="b2c-page" class="page">
                 <h1>Subscribers (B2C)</h1>
-                <button class="btn" onclick="loadUsers('b2c')" style="margin-bottom:10px;">Refresh List</button>
                 <table id="b2c-table"><thead><tr><th>Name</th><th>Phone</th><th>Status</th><th>Joined</th></tr></thead><tbody></tbody></table>
             </div>
 
             <div id="b2b-page" class="page">
                 <h1>Enterprises (B2B)</h1>
-                <button class="btn" onclick="loadUsers('b2b')" style="margin-bottom:10px;">Refresh List</button>
                 <table id="b2b-table"><thead><tr><th>Company</th><th>Phone</th><th>Role</th><th>Joined</th></tr></thead><tbody></tbody></table>
             </div>
 
             <div id="directory-page" class="page">
-                <h1>Directory</h1>
+                <h1>Directory Manager</h1>
+                
+                <div class="card">
+                    <h3>Add Single Entry</h3>
+                    <div class="input-group">
+                        <input id="dir-name" placeholder="Company Name">
+                        <input id="dir-phone" placeholder="Phone">
+                        <select id="dir-cat"><option>Loading...</option></select>
+                        <button class="btn" onclick="addDir()">Add</button>
+                    </div>
+                </div>
+
                 <div class="card">
                     <h3>Bulk Upload CSV</h3>
-                    <input type="file" id="csv-file" accept="*/*">
-                    <button class="btn" onclick="uploadCsv(this)" style="margin-top:10px;">Upload Database</button>
+                    <p style="font-size:12px; color:#666; margin-top:0;">Columns: Name, Phone, Category</p>
+                    <div class="input-group">
+                        <input type="file" id="csv-file" accept="*/*">
+                        <button class="btn" onclick="uploadCsv(this)" style="margin-top: 10px;">Upload Database</button>
+                    </div>
                 </div>
+
                 <table id="dir-table"><thead><tr><th>Name</th><th>Phone</th><th>Category</th></tr></thead><tbody></tbody></table>
             </div>
 
+            <div id="fraud-page" class="page">
+                <h1>Fraud Intelligence</h1>
+                <table id="fraud-table"><thead><tr><th>Target Number</th><th>Reason</th><th>Reporter</th><th>Action</th></tr></thead><tbody></tbody></table>
+            </div>
+
             <div id="settings-page" class="page">
-                <h1>Settings</h1>
+                <h1>Administrator Settings</h1>
+                
                 <div class="card">
                     <h3>Manage Categories</h3>
                     <div class="input-group">
-                        <input id="new-cat" placeholder="Category Name">
-                        <button class="btn" onclick="addCategory()">Add</button>
+                        <input id="new-cat" placeholder="New Category Name (e.g. Cinema)">
+                        <button class="btn" onclick="addCategory()">Add Category</button>
                     </div>
                     <div id="cat-list"></div>
                 </div>
+
+                <div class="card">
+                    <h3>Security</h3>
+                    <div class="input-group">
+                        <input type="password" id="new-pass" placeholder="New Admin Password">
+                        <button class="btn btn-danger" onclick="changePass()">Update Password</button>
+                    </div>
+                </div>
             </div>
+
         </div>
-        <div id="status-bar">System Ready.</div>
     </div>
 
     <script>
-        // 1. USE RELATIVE PATH (Prevents CORS & URL errors)
-        const API = '/api/v1/owner';
-        
-        function setStatus(msg) {
-            document.getElementById('status-bar').innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
-            console.log(msg);
-        }
+        // TARGETING THE LIVE SERVER
+        const API = 'https://vbcs-backend-1.onrender.com/api/v1/owner';
+        let currentUser = '';
 
-        // 2. TIMEOUT WRAPPER (Detects "Hanging" requests)
-        async function fetchWithTimeout(url, options = {}) {
-            const controller = new AbortController();
-            const id = setTimeout(() => controller.abort(), 8000); // 8 second timeout
+        // --- AUTH ---
+        async function handleLogin() {
+            const u = document.getElementById('user').value;
+            const p = document.getElementById('pass').value;
+            const btn = document.querySelector('#login-overlay button');
+            btn.innerText = "Checking...";
+            
             try {
-                const response = await fetch(url, { ...options, signal: controller.signal });
-                clearTimeout(id);
-                return response;
-            } catch (error) {
-                clearTimeout(id);
-                throw error;
+                const res = await fetch(`${API}/login`, { 
+                    method:'POST', 
+                    headers:{'Content-Type':'application/json'}, 
+                    body:JSON.stringify({username:u, password:p}) 
+                });
+                const d = await res.json();
+                
+                if(d.success) {
+                    document.getElementById('login-overlay').style.display = 'none';
+                    currentUser = u;
+                    loadStats(); 
+                    loadCategories(); 
+                } else {
+                    document.getElementById('login-msg').innerText = d.message;
+                    btn.innerText = "Secure Login";
+                }
+            } catch(e) { 
+                document.getElementById('login-msg').innerText = "Connection Error. Is server running?";
+                btn.innerText = "Secure Login";
             }
         }
 
-        // --- NAVIGATION ---
+        // --- NAV ---
         function nav(page) {
             document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
             document.getElementById(`${page}-page`).classList.add('active');
@@ -136,128 +206,208 @@
             if(page === 'b2c') loadUsers('b2c');
             if(page === 'b2b') loadUsers('b2b');
             if(page === 'directory') loadDirectory();
+            if(page === 'fraud') loadFraud();
         }
 
-        // --- DATA LOADERS ---
-        async function loadUsers(type) {
-            setStatus(`Loading ${type} users...`);
-            const tbody = document.querySelector(`#${type}-table tbody`);
-            tbody.innerHTML = '<tr><td colspan="4">Loading...</td></tr>';
-
+        // --- LOADERS ---
+        async function loadStats() {
             try {
-                const res = await fetchWithTimeout(`${API}/subscribers/${type}`);
-                if (!res.ok) throw new Error(`Server Error: ${res.status}`);
+                const res = await fetch(`${API}/stats`);
                 const d = await res.json();
+                document.getElementById('d-rev').innerText = `$${d.totalMonthlyRevenue.toLocaleString()}`;
+                document.getElementById('d-users').innerText = d.totalB2CSubscribers;
+                document.getElementById('d-ent').innerText = d.totalEnterprises;
+                document.getElementById('d-rep').innerText = d.spamReports;
+            } catch(e) {}
+        }
 
+        async function loadUsers(type) {
+            console.log("Loading users for:", type); 
+            
+            const tbody = document.querySelector(`#${type}-table tbody`);
+            if (!tbody) return console.error("Table not found:", type);
+            
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#666;">Loading data...</td></tr>';
+            
+            try {
+                const res = await fetch(`${API}/subscribers/${type}`);
+                
+                if (!res.ok) throw new Error(`Server Error: ${res.status}`);
+                
+                const d = await res.json();
+                
                 if (!Array.isArray(d) || d.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4">No users found.</td></tr>';
-                    setStatus(`Loaded 0 users.`);
+                    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:20px;">No users found in database.</td></tr>';
                     return;
                 }
-
+                
                 tbody.innerHTML = d.map(u => `
                     <tr>
-                        <td>${u.fullName || u.companyName || 'Unknown'}</td>
+                        <td><strong>${u.fullName || u.companyName || 'Unknown'}</strong></td>
                         <td>${u.phoneNumber}</td>
-                        <td>${u.role}</td>
+                        <td><span class="cat-tag">${u.role}</span></td>
                         <td>${new Date(u.createdAt).toLocaleDateString()}</td>
                     </tr>`).join('');
-                setStatus(`Loaded ${d.length} users successfully.`);
-
-            } catch(e) {
-                handleError(e, tbody);
+                    
+            } catch(e) { 
+                console.error("Load Failed:", e);
+                tbody.innerHTML = `<tr><td colspan="4" style="color:red; text-align:center;">Error loading data. <br><small>${e.message}</small></td></tr>`; 
             }
         }
 
         async function loadDirectory() {
-            setStatus("Loading directory...");
             const tbody = document.querySelector('#dir-table tbody');
             try {
-                const res = await fetchWithTimeout(`${API}/directory`);
+                const res = await fetch(`${API}/directory`);
                 const d = await res.json();
                 tbody.innerHTML = d.map(i => `<tr><td>${i.companyName}</td><td>${i.phoneNumber}</td><td>${i.category}</td></tr>`).join('');
-                setStatus("Directory loaded.");
-            } catch(e) { setStatus("Directory load error: " + e.message); }
+            } catch(e) {}
         }
 
-        // --- UPLOAD FUNCTION ---
+        async function loadFraud() {
+            const tbody = document.querySelector('#fraud-table tbody');
+            try {
+                const res = await fetch(`${API}/fraud-reports`);
+                const d = await res.json();
+                tbody.innerHTML = d.map(i => `
+                    <tr>
+                        <td style="color:#d32f2f; font-weight:bold;">${i.reportedNumber}</td>
+                        <td>${i.reason}</td>
+                        <td>${i.comments || '-'}</td>
+                        <td><button class="btn btn-danger" style="padding:5px 10px; font-size:12px;" onclick="suspend('${i.reportedNumber}')">Suspend</button></td>
+                    </tr>`).join('');
+            } catch(e) {}
+        }
+
+        async function suspend(num) {
+            if(!confirm(`Permanently suspend ${num}?`)) return;
+            await fetch(`${API}/suspend-number`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ number: num })
+            });
+            alert("Number Suspended");
+            loadFraud();
+        }
+
+        // --- SETTINGS ---
+        async function loadCategories() {
+            const res = await fetch(`${API}/categories`);
+            const cats = await res.json();
+            
+            const sel = document.getElementById('dir-cat');
+            sel.innerHTML = cats.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+            
+            document.getElementById('cat-list').innerHTML = cats.map(c => `
+                <span class="cat-tag">
+                    ${c.name} <i class="fas fa-times" onclick="delCat('${c.name}')"></i>
+                </span>`).join('');
+        }
+
+        async function addCategory() {
+            const name = document.getElementById('new-cat').value;
+            if(!name) return;
+            await fetch(`${API}/categories`, { 
+                method:'POST', 
+                headers:{'Content-Type':'application/json'}, 
+                body:JSON.stringify({name}) 
+            });
+            document.getElementById('new-cat').value = '';
+            loadCategories();
+        }
+
+        async function delCat(name) {
+            if(confirm('Delete category?')) {
+                await fetch(`${API}/categories/${name}`, { method:'DELETE' });
+                loadCategories();
+            }
+        }
+
+        async function changePass() {
+            const newPass = document.getElementById('new-pass').value;
+            if(!newPass) return alert("Enter password");
+            const res = await fetch(`${API}/change-password`, { 
+                method:'POST', 
+                headers:{'Content-Type':'application/json'}, 
+                body:JSON.stringify({ username: currentUser, newPassword: newPass }) 
+            });
+            const d = await res.json();
+            alert(d.message);
+        }
+
+        // --- ACTIONS ---
+        async function addDir() {
+            const name = document.getElementById('dir-name').value;
+            const phone = document.getElementById('dir-phone').value;
+            if(!name || !phone) return alert("Fill all fields");
+
+            await fetch(`${API}/directory-add`, { 
+                method:'POST', 
+                headers:{'Content-Type':'application/json'}, 
+                body:JSON.stringify({
+                    companyName: name,
+                    phoneNumber: phone,
+                    category: document.getElementById('dir-cat').value
+                })
+            });
+            alert("Entry Added");
+            document.getElementById('dir-name').value = '';
+            document.getElementById('dir-phone').value = '';
+            loadDirectory();
+        }
+
+        // --- UPLOAD FUNCTION (CRASH PROOF) ---
         async function uploadCsv(btn) {
             const input = document.getElementById('csv-file');
             const file = input.files[0];
             
-            if(!file) return alert("Please select a file first.");
+            if(!file) return alert("Select a CSV file first");
             
-            setStatus(`Uploading ${file.name}...`);
             const fd = new FormData();
             fd.append('file', file);
             
+            // Visual Feedback
             const origText = btn.innerText;
             btn.innerText = "Uploading...";
             btn.disabled = true;
-
+            btn.style.opacity = "0.7";
+            
             try {
-                const res = await fetchWithTimeout(`${API}/directory-upload`, { method: 'POST', body: fd });
+                const res = await fetch(`${API}/directory-upload`, { method:'POST', body:fd });
                 const d = await res.json();
                 
                 if(res.ok) {
                     alert(d.message);
-                    input.value = '';
+                    input.value = ''; // Clear input
                     loadDirectory();
-                    setStatus("Upload Successful!");
                 } else {
-                    alert("Server Error: " + d.message);
-                    setStatus("Upload Rejected by Server.");
+                    alert("Server Error: " + (d.message || "Upload crashed"));
                 }
-            } catch(e) {
-                handleError(e);
-                alert("Upload Failed. Check Status Bar.");
+            } catch(e) { 
+                console.error(e);
+                alert("Upload Failed. Check connection."); 
             }
-
+            
+            // Reset Button
             btn.innerText = origText;
             btn.disabled = false;
+            btn.style.opacity = "1";
         }
 
-        // --- SETTINGS ---
-        async function addCategory() {
-            const name = document.getElementById('new-cat').value;
-            if(!name) return;
-            setStatus("Adding category...");
-            try {
-                await fetchWithTimeout(`${API}/categories`, { 
-                    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name}) 
-                });
-                document.getElementById('new-cat').value = '';
-                setStatus("Category Added.");
-            } catch(e) { handleError(e); }
-        }
-
-        // --- ERROR HANDLER ---
-        function handleError(e, tbody = null) {
-            let msg = e.message;
-            if (e.name === 'AbortError') {
-                msg = "TIMEOUT! Check MongoDB IP Whitelist (Network Access).";
-            } else if (msg.includes("Failed to fetch")) {
-                msg = "Connection Refused. Is server running?";
-            }
+        async function sendBroadcast() {
+            const title = document.getElementById('notif-title').value;
+            const body = document.getElementById('notif-body').value;
+            if(!title) return alert("Title required");
             
-            setStatus(`ERROR: ${msg}`);
-            console.error(e);
-            
-            if(tbody) tbody.innerHTML = `<tr><td colspan="4" style="color:red; font-weight:bold;">${msg}</td></tr>`;
+            await fetch(`${API}/broadcast`, { 
+                method:'POST', 
+                headers:{'Content-Type':'application/json'}, 
+                body:JSON.stringify({title, body}) 
+            });
+            alert("Notification Sent to all devices!");
+            document.getElementById('notif-title').value = '';
+            document.getElementById('notif-body').value = '';
         }
-
-        // Init
-        setStatus("System Ready. Waiting for command.");
-        // Try loading stats to test connection immediately
-        fetchWithTimeout(`${API}/stats`)
-            .then(r => r.json())
-            .then(d => {
-                document.getElementById('d-rev').innerText = `$${d.totalMonthlyRevenue||0}`;
-                document.getElementById('d-users').innerText = d.totalB2CSubscribers||0;
-                document.getElementById('d-ent').innerText = d.totalEnterprises||0;
-                setStatus("Connected to Server.");
-            })
-            .catch(e => handleError(e));
     </script>
 </body>
 </html>
