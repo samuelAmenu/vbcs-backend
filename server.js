@@ -1,8 +1,8 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.28 (FULL LEGACY + SMART UPLOAD)
-   - Restore: ALL 480+ lines of Mobile/Legacy Routes
-   - Fix: "Imported 0 items" (Smart Column Mapping)
-   - Fix: 503 Crash (RAM Mode)
+   VBCS MASTER SERVER V12.30 (FULL LEGACY + SEARCH FIX)
+   - Base: V12.28 (Full Code)
+   - Fix: Search now works (Name, Phone, Category)
+   - Fix: Search handles empty query (No blank screen)
    ================================================== */
 
 require('dotenv').config();
@@ -16,18 +16,18 @@ const { Server } = require("socket.io");
 const multer = require('multer');       
 const csv = require('csv-parser');      
 const fs = require('fs');               
-const { Readable } = require('stream'); // REQUIRED FOR RAM UPLOAD
+const { Readable } = require('stream'); 
 
 const app = express();
 const server = http.createServer(app); 
 
-// --- FIX: USE MEMORY STORAGE (No Disk Access = No 503 Error) ---
+// --- FIX: USE MEMORY STORAGE (No Disk Access) ---
 const upload = multer({ 
     storage: multer.memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 } // 10MB Limit
+    limits: { fileSize: 10 * 1024 * 1024 } 
 }); 
 
-// --- CORS SETTINGS ---
+// --- CORS ---
 app.use(cors({
     origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -46,7 +46,7 @@ const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://sami_dbuser:SAMI!ame11
 mongoose.connect(MONGO_URI)
   .then(() => {
       console.log('✅ VBCS Engine: Ready & Connected');
-      initAdmin(); // Auto-fix admin account
+      initAdmin(); 
   })
   .catch(err => console.error('❌ DB Error:', err.message));
 
@@ -110,15 +110,12 @@ const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
 async function initAdmin() {
     try {
         const admin = await Admin.findOne({ username: 'admin' });
-        
-        // Case 1: No Admin -> Create it
         if (!admin) {
             const newAdmin = new Admin({ username: 'admin' });
             newAdmin.setPassword('admin123');
             await newAdmin.save();
             console.log("🔒 Default Admin Created");
         } 
-        // Case 2: Broken Admin (Missing Salt) -> Recreate it
         else if (!admin.salt || !admin.passwordHash) {
             console.log("⚠️ Found corrupted Admin. Recreating...");
             await Admin.deleteOne({ username: 'admin' });
@@ -291,9 +288,33 @@ app.post('/api/v12/report', async (req, res) => {
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
+// --- UPDATED: SEARCH FIX (V12.30) ---
+// Now searches Phone Numbers too & handles empty queries
 app.get('/api/v12/directory/search', async (req, res) => {
-    const regex = new RegExp(req.query.q, 'i');
-    res.json(await DirectoryEntry.find({ $or: [{ companyName: regex }, { category: regex }] }).limit(20));
+    try {
+        const q = req.query.q;
+        
+        // 1. Return default list if query is empty
+        if (!q || q.trim() === "") {
+            const all = await DirectoryEntry.find().limit(20);
+            return res.json(all);
+        }
+
+        // 2. Search Name, Category OR Phone
+        const regex = new RegExp(q, 'i');
+        const results = await DirectoryEntry.find({
+            $or: [
+                { companyName: regex },
+                { category: regex },
+                { phoneNumber: regex }
+            ]
+        }).limit(50);
+        
+        res.json(results);
+    } catch (e) {
+        console.error("Search Error:", e);
+        res.json([]);
+    }
 });
 
 // ==========================================
@@ -383,19 +404,16 @@ ownerRouter.post('/directory-add', async (req, res) => {
 });
 
 // --- CSV UPLOAD (SMART RAM MODE) ---
-// Fixes "0 Items" and "503 Crash"
 ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
     if(!req.file) return res.status(400).json({ message: "No file found" });
     
     const stream = Readable.from(req.file.buffer.toString('utf8'));
-    let entries = []; // Scope fix
+    let entries = [];
 
     stream
         .pipe(csv())
         .on('data', (row) => {
             const rowKeys = Object.keys(row);
-            
-            // Helper to find column case-insensitively
             const findVal = (possibleNames) => {
                 for (const name of possibleNames) {
                     const foundKey = rowKeys.find(k => k.toLowerCase().replace(/[^a-z]/g, '') === name);
@@ -418,9 +436,7 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
         })
         .on('end', async () => {
             try {
-                if(entries.length === 0) return res.json({ success: false, message: "No valid Phone/Name columns found in CSV" });
-
-                // Insert with Duplicate Skip
+                if(entries.length === 0) return res.json({ success: false, message: "No valid columns found" });
                 await DirectoryEntry.insertMany(entries, { ordered: false });
                 res.json({ success: true, message: `Imported ${entries.length} items` });
             } catch (e) {
@@ -428,13 +444,11 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
                     const inserted = entries.length - e.writeErrors.length;
                     res.json({ success: true, message: `Imported ${inserted} items. (Skipped duplicates)` });
                 } else {
-                    console.error("DB Error:", e);
                     res.status(500).json({ message: "Database Error" });
                 }
             }
         })
         .on('error', (err) => {
-            console.error("CSV Parse Error:", err);
             res.status(400).json({ message: "Invalid CSV file." });
         });
 });
@@ -495,4 +509,4 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.28 Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.30 Server Running on Port ${PORT}`); });
