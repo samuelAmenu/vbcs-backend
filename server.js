@@ -1,7 +1,7 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.26 (FULL LEGACY + SCOPE FIX)
-   - Restore: All 480+ lines of V9/V12 routes
-   - Fix: "entries is not defined" error in Upload
+   VBCS MASTER SERVER V12.28 (FULL LEGACY + SMART UPLOAD)
+   - Restore: ALL 480+ lines of Mobile/Legacy Routes
+   - Fix: "Imported 0 items" (Smart Column Mapping)
    - Fix: 503 Crash (RAM Mode)
    ================================================== */
 
@@ -382,37 +382,48 @@ ownerRouter.post('/directory-add', async (req, res) => {
     res.json({ success: true });
 });
 
-// --- CSV UPLOAD (RAM MODE + SCOPE FIX) ---
+// --- CSV UPLOAD (SMART RAM MODE) ---
+// Fixes "0 Items" and "503 Crash"
 ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
-    // 1. Check if file exists
     if(!req.file) return res.status(400).json({ message: "No file found" });
     
-    // 2. Create Stream from Buffer (Correct Way)
     const stream = Readable.from(req.file.buffer.toString('utf8'));
-    const results = [];
-    
-    // 3. Declare 'entries' outside to fix Scope Error
-    let entries = [];
+    let entries = []; // Scope fix
 
     stream
         .pipe(csv())
-        .on('data', (data) => results.push(data))
+        .on('data', (row) => {
+            const rowKeys = Object.keys(row);
+            
+            // Helper to find column case-insensitively
+            const findVal = (possibleNames) => {
+                for (const name of possibleNames) {
+                    const foundKey = rowKeys.find(k => k.toLowerCase().replace(/[^a-z]/g, '') === name);
+                    if (foundKey && row[foundKey]) return row[foundKey];
+                }
+                return null;
+            };
+
+            const name = findVal(['company', 'companyname', 'name', 'business', 'title']);
+            const phone = findVal(['phone', 'phonenumber', 'mobile', 'contact', 'tel']);
+            const cat = findVal(['category', 'type', 'industry', 'sector']) || 'Other';
+
+            if (phone) {
+                entries.push({
+                    companyName: name || 'Unknown',
+                    phoneNumber: phone,
+                    category: cat
+                });
+            }
+        })
         .on('end', async () => {
             try {
-                // 4. Map Data
-                entries = results.map(row => ({
-                    companyName: row.Name || row.companyName || 'Unknown',
-                    phoneNumber: row.Phone || row.phoneNumber || '000',
-                    category: row.Category || row.category || 'Other'
-                }));
-                
-                if(entries.length === 0) return res.json({ success: false, message: "CSV file empty" });
+                if(entries.length === 0) return res.json({ success: false, message: "No valid Phone/Name columns found in CSV" });
 
-                // 5. Insert with Duplicate Skip
+                // Insert with Duplicate Skip
                 await DirectoryEntry.insertMany(entries, { ordered: false });
                 res.json({ success: true, message: `Imported ${entries.length} items` });
             } catch (e) {
-                // 6. Handle Partial Success (Now 'entries' is visible!)
                 if (e.writeErrors) {
                     const inserted = entries.length - e.writeErrors.length;
                     res.json({ success: true, message: `Imported ${inserted} items. (Skipped duplicates)` });
@@ -484,4 +495,4 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.26 Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.28 Server Running on Port ${PORT}`); });
