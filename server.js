@@ -1,9 +1,8 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.32 (CATEGORY HUB COMPLETE)
-   - Added: Dynamic Category Counts (e.g. "Bank (5)")
-   - Added: Category Drill-Down Endpoint
-   - Feature: Caller ID checks Directory List
-   - Base: Full Legacy Code + Smart Upload
+   VBCS MASTER SERVER V12.33 (SMART CATEGORY HUB)
+   - Feature: "Category First" Navigation Support
+   - Feature: Auto-Cleans Categories (e.g. "bank" -> "Bank")
+   - Includes: All Legacy Routes + RAM Upload
    ================================================== */
 
 require('dotenv').config();
@@ -267,6 +266,7 @@ app.get('/api/v9/guardian/circle', async (req, res) => {
 });
 
 // --- CORE ROUTES (v12) ---
+// 1. CALLER ID LOOKUP
 app.get('/api/v12/lookup/:number', async (req, res) => {
     const num = req.params.number;
     const verified = await DirectoryEntry.findOne({ phoneNumber: num });
@@ -292,10 +292,10 @@ app.post('/api/v12/report', async (req, res) => {
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
-// --- NEW: SMART CATEGORIES (COUNTS & GROUPS) ---
+// 2. CATEGORY LIST (Screen 1: The Buttons)
 app.get('/api/v12/categories', async (req, res) => {
     try {
-        // Groups unique categories and counts them
+        // Group by Category and Count
         const stats = await DirectoryEntry.aggregate([
             { $group: { _id: "$category", count: { $sum: 1 } } },
             { $sort: { _id: 1 } } 
@@ -306,40 +306,35 @@ app.get('/api/v12/categories', async (req, res) => {
         if(result.length === 0) return res.json([{name: "Directory Empty", count: 0}]);
         res.json(result);
     } catch (e) {
-        // Fallback if aggregation fails
         res.json([{name: "Bank", count:0}, {name: "Emergency", count:0}]);
     }
 });
 
-// --- NEW: CATEGORY DRILL-DOWN (LIST BY CAT) ---
+// 3. CATEGORY LISTING (Screen 2: The List)
 app.get('/api/v12/directory/category/:name', async (req, res) => {
     try {
+        const catName = req.params.name;
         const list = await DirectoryEntry.find({ 
-            category: { $regex: new RegExp("^" + req.params.name + "$", "i") } 
+            category: { $regex: new RegExp("^" + catName + "$", "i") } 
         }).sort({ companyName: 1 });
         res.json(list);
     } catch (e) { res.json([]); }
 });
 
-// --- UPDATED: SEARCH FIX (With Category Filter) ---
+// 4. GENERAL SEARCH
 app.get('/api/v12/directory/search', async (req, res) => {
     try {
-        const { q, category } = req.query;
-        let query = {};
+        const { q } = req.query;
+        if (!q || q.trim() === "") return res.json(await DirectoryEntry.find().limit(20));
 
-        if (category && category !== 'All') {
-            query.category = { $regex: new RegExp("^" + category + "$", "i") }; 
-        }
-
-        if (q && q.trim() !== "") {
-            const regex = new RegExp(q, 'i');
-            query.$or = [
+        const regex = new RegExp(q, 'i');
+        const results = await DirectoryEntry.find({
+            $or: [
                 { companyName: regex },
-                { phoneNumber: regex }
-            ];
-        }
-
-        const results = await DirectoryEntry.find(query).limit(50);
+                { phoneNumber: regex },
+                { category: regex }
+            ]
+        }).limit(50);
         res.json(results);
     } catch (e) { res.json([]); }
 });
@@ -403,7 +398,7 @@ ownerRouter.get('/directory', async (req, res) => {
     res.json(list);
 });
 
-// --- CSV UPLOAD (SMART RAM MODE) ---
+// --- CSV UPLOAD (AUTO-CLEAN CATEGORIES) ---
 ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
     if(!req.file) return res.status(400).json({ message: "No file found" });
     
@@ -422,9 +417,13 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
                 return null;
             };
 
-            const name = findVal(['company', 'companyname', 'name', 'business', 'title']);
-            const phone = findVal(['phone', 'phonenumber', 'mobile', 'contact', 'tel']);
-            const cat = findVal(['category', 'type', 'industry', 'sector']) || 'Other';
+            const name = findVal(['company', 'name', 'business']);
+            const phone = findVal(['phone', 'mobile', 'number']);
+            let cat = findVal(['category', 'type', 'industry']) || 'Other';
+
+            // Auto-Clean Category: "bank " -> "Bank"
+            cat = cat.trim();
+            cat = cat.charAt(0).toUpperCase() + cat.slice(1).toLowerCase();
 
             if (phone) {
                 entries.push({
@@ -436,24 +435,15 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
         })
         .on('end', async () => {
             try {
-                if(entries.length === 0) return res.json({ success: false, message: "No valid Phone/Name columns found in CSV" });
-
+                if(entries.length === 0) return res.json({ success: false, message: "No columns found" });
                 await DirectoryEntry.insertMany(entries, { ordered: false });
                 res.json({ success: true, message: `Imported ${entries.length} items` });
             } catch (e) {
-                if (e.writeErrors) {
-                    const inserted = entries.length - e.writeErrors.length;
-                    res.json({ success: true, message: `Imported ${inserted} items. (Skipped duplicates)` });
-                } else {
-                    console.error("DB Error:", e);
-                    res.status(500).json({ message: "Database Error" });
-                }
+                const count = e.writeErrors ? entries.length - e.writeErrors.length : 0;
+                res.json({ success: true, message: `Imported ${count} items` });
             }
         })
-        .on('error', (err) => {
-            console.error("CSV Parse Error:", err);
-            res.status(400).json({ message: "Invalid CSV file." });
-        });
+        .on('error', () => res.status(400).json({ message: "Bad CSV" }));
 });
 
 ownerRouter.post('/broadcast', async (req, res) => {
@@ -512,4 +502,4 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.32 Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.33 Server Running on Port ${PORT}`); });
