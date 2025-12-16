@@ -1,8 +1,9 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.31 (CATEGORY FILTER MODE)
-   - Feature: Public Categories Endpoint (For App Scroller)
-   - Feature: Search Filter (Filter by Category + Name)
-   - Includes: All V12.30 Fixes + Full Legacy Logic
+   VBCS MASTER SERVER V12.32 (CATEGORY HUB COMPLETE)
+   - Added: Dynamic Category Counts (e.g. "Bank (5)")
+   - Added: Category Drill-Down Endpoint
+   - Feature: Caller ID checks Directory List
+   - Base: Full Legacy Code + Smart Upload
    ================================================== */
 
 require('dotenv').config();
@@ -110,12 +111,15 @@ const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
 async function initAdmin() {
     try {
         const admin = await Admin.findOne({ username: 'admin' });
+        
+        // Case 1: No Admin -> Create it
         if (!admin) {
             const newAdmin = new Admin({ username: 'admin' });
             newAdmin.setPassword('admin123');
             await newAdmin.save();
             console.log("🔒 Default Admin Created");
         } 
+        // Case 2: Broken Admin (Missing Salt) -> Recreate it
         else if (!admin.salt || !admin.passwordHash) {
             console.log("⚠️ Found corrupted Admin. Recreating...");
             await Admin.deleteOne({ username: 'admin' });
@@ -288,28 +292,45 @@ app.post('/api/v12/report', async (req, res) => {
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
-// --- NEW: PUBLIC CATEGORY LIST (FOR SCROLLER) ---
+// --- NEW: SMART CATEGORIES (COUNTS & GROUPS) ---
 app.get('/api/v12/categories', async (req, res) => {
     try {
-        const cats = await Category.find().sort({ name: 1 });
-        // Fallback for empty UI
-        if(cats.length === 0) return res.json([{name: "Bank"}, {name: "Emergency"}, {name: "Transport"}]);
-        res.json(cats);
+        // Groups unique categories and counts them
+        const stats = await DirectoryEntry.aggregate([
+            { $group: { _id: "$category", count: { $sum: 1 } } },
+            { $sort: { _id: 1 } } 
+        ]);
+        
+        const result = stats.map(s => ({ name: s._id || "Other", count: s.count }));
+        
+        if(result.length === 0) return res.json([{name: "Directory Empty", count: 0}]);
+        res.json(result);
+    } catch (e) {
+        // Fallback if aggregation fails
+        res.json([{name: "Bank", count:0}, {name: "Emergency", count:0}]);
+    }
+});
+
+// --- NEW: CATEGORY DRILL-DOWN (LIST BY CAT) ---
+app.get('/api/v12/directory/category/:name', async (req, res) => {
+    try {
+        const list = await DirectoryEntry.find({ 
+            category: { $regex: new RegExp("^" + req.params.name + "$", "i") } 
+        }).sort({ companyName: 1 });
+        res.json(list);
     } catch (e) { res.json([]); }
 });
 
-// --- UPDATED: SEARCH FIX (Now supports Category filtering) ---
+// --- UPDATED: SEARCH FIX (With Category Filter) ---
 app.get('/api/v12/directory/search', async (req, res) => {
     try {
         const { q, category } = req.query;
         let query = {};
 
-        // 1. Filter by Category (e.g. ?category=Bank)
         if (category && category !== 'All') {
-            query.category = { $regex: new RegExp("^" + category + "$", "i") }; // Exact match (case insensitive)
+            query.category = { $regex: new RegExp("^" + category + "$", "i") }; 
         }
 
-        // 2. Search Text (if provided)
         if (q && q.trim() !== "") {
             const regex = new RegExp(q, 'i');
             query.$or = [
@@ -320,10 +341,7 @@ app.get('/api/v12/directory/search', async (req, res) => {
 
         const results = await DirectoryEntry.find(query).limit(50);
         res.json(results);
-    } catch (e) {
-        console.error("Search Error:", e);
-        res.json([]);
-    }
+    } catch (e) { res.json([]); }
 });
 
 // ==========================================
@@ -380,36 +398,9 @@ ownerRouter.get('/subscribers/:type', async (req, res) => {
     }
 });
 
-ownerRouter.get('/categories', async (req, res) => {
-    const cats = await Category.find().sort({ name: 1 });
-    if(cats.length === 0) {
-        const defaults = ["Bank", "Hotel", "Embassy", "Transport", "Emergency", "Other"];
-        await Category.insertMany(defaults.map(n => ({ name: n })));
-        return res.json(defaults.map(n => ({ name: n })));
-    }
-    res.json(cats);
-});
-
-ownerRouter.post('/categories', async (req, res) => {
-    try {
-        await Category.create({ name: req.body.name });
-        res.json({ success: true });
-    } catch(e) { res.status(400).json({ message: "Category exists" }); }
-});
-
-ownerRouter.delete('/categories/:name', async (req, res) => {
-    await Category.deleteOne({ name: req.params.name });
-    res.json({ success: true });
-});
-
 ownerRouter.get('/directory', async (req, res) => {
     const list = await DirectoryEntry.find().sort({ companyName: 1 });
     res.json(list);
-});
-
-ownerRouter.post('/directory-add', async (req, res) => {
-    await DirectoryEntry.create(req.body);
-    res.json({ success: true });
 });
 
 // --- CSV UPLOAD (SMART RAM MODE) ---
@@ -423,8 +414,6 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
         .pipe(csv())
         .on('data', (row) => {
             const rowKeys = Object.keys(row);
-            
-            // Helper to find column case-insensitively
             const findVal = (possibleNames) => {
                 for (const name of possibleNames) {
                     const foundKey = rowKeys.find(k => k.toLowerCase().replace(/[^a-z]/g, '') === name);
@@ -523,4 +512,4 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.31 Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.32 Server Running on Port ${PORT}`); });
