@@ -1,8 +1,8 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.30 (FULL LEGACY + SEARCH FIX)
-   - Base: V12.28 (Full Code)
-   - Fix: Search now works (Name, Phone, Category)
-   - Fix: Search handles empty query (No blank screen)
+   VBCS MASTER SERVER V12.31 (CATEGORY FILTER MODE)
+   - Feature: Public Categories Endpoint (For App Scroller)
+   - Feature: Search Filter (Filter by Category + Name)
+   - Includes: All V12.30 Fixes + Full Legacy Logic
    ================================================== */
 
 require('dotenv').config();
@@ -288,28 +288,37 @@ app.post('/api/v12/report', async (req, res) => {
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
-// --- UPDATED: SEARCH FIX (V12.30) ---
-// Now searches Phone Numbers too & handles empty queries
+// --- NEW: PUBLIC CATEGORY LIST (FOR SCROLLER) ---
+app.get('/api/v12/categories', async (req, res) => {
+    try {
+        const cats = await Category.find().sort({ name: 1 });
+        // Fallback for empty UI
+        if(cats.length === 0) return res.json([{name: "Bank"}, {name: "Emergency"}, {name: "Transport"}]);
+        res.json(cats);
+    } catch (e) { res.json([]); }
+});
+
+// --- UPDATED: SEARCH FIX (Now supports Category filtering) ---
 app.get('/api/v12/directory/search', async (req, res) => {
     try {
-        const q = req.query.q;
-        
-        // 1. Return default list if query is empty
-        if (!q || q.trim() === "") {
-            const all = await DirectoryEntry.find().limit(20);
-            return res.json(all);
+        const { q, category } = req.query;
+        let query = {};
+
+        // 1. Filter by Category (e.g. ?category=Bank)
+        if (category && category !== 'All') {
+            query.category = { $regex: new RegExp("^" + category + "$", "i") }; // Exact match (case insensitive)
         }
 
-        // 2. Search Name, Category OR Phone
-        const regex = new RegExp(q, 'i');
-        const results = await DirectoryEntry.find({
-            $or: [
+        // 2. Search Text (if provided)
+        if (q && q.trim() !== "") {
+            const regex = new RegExp(q, 'i');
+            query.$or = [
                 { companyName: regex },
-                { category: regex },
                 { phoneNumber: regex }
-            ]
-        }).limit(50);
-        
+            ];
+        }
+
+        const results = await DirectoryEntry.find(query).limit(50);
         res.json(results);
     } catch (e) {
         console.error("Search Error:", e);
@@ -414,6 +423,8 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
         .pipe(csv())
         .on('data', (row) => {
             const rowKeys = Object.keys(row);
+            
+            // Helper to find column case-insensitively
             const findVal = (possibleNames) => {
                 for (const name of possibleNames) {
                     const foundKey = rowKeys.find(k => k.toLowerCase().replace(/[^a-z]/g, '') === name);
@@ -436,7 +447,8 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
         })
         .on('end', async () => {
             try {
-                if(entries.length === 0) return res.json({ success: false, message: "No valid columns found" });
+                if(entries.length === 0) return res.json({ success: false, message: "No valid Phone/Name columns found in CSV" });
+
                 await DirectoryEntry.insertMany(entries, { ordered: false });
                 res.json({ success: true, message: `Imported ${entries.length} items` });
             } catch (e) {
@@ -444,11 +456,13 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
                     const inserted = entries.length - e.writeErrors.length;
                     res.json({ success: true, message: `Imported ${inserted} items. (Skipped duplicates)` });
                 } else {
+                    console.error("DB Error:", e);
                     res.status(500).json({ message: "Database Error" });
                 }
             }
         })
         .on('error', (err) => {
+            console.error("CSV Parse Error:", err);
             res.status(400).json({ message: "Invalid CSV file." });
         });
 });
@@ -509,4 +523,4 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.30 Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.31 Server Running on Port ${PORT}`); });
