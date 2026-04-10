@@ -1,8 +1,8 @@
 /* ==================================================
-   VBCS MASTER SERVER V12.33 (SMART CATEGORY HUB)
-   - Feature: "Category First" Navigation Support
-   - Feature: Auto-Cleans Categories (e.g. "bank" -> "Bank")
-   - Includes: All Legacy Routes + RAM Upload
+   VBCS MASTER SERVER V12.34 (SMART CATEGORY HUB + FLUTTER AUTH)
+   - Unified User Model
+   - Added /api/auth for new Flutter App (JWT)
+   - Preserved all v9, v12, and Owner routes
    ================================================== */
 
 require('dotenv').config();
@@ -17,17 +17,19 @@ const multer = require('multer');
 const csv = require('csv-parser');      
 const fs = require('fs');               
 const { Readable } = require('stream'); 
+const jwt = require('jsonwebtoken'); // NEW: Required for Flutter Auth
 
 const app = express();
 const server = http.createServer(app); 
 
-// --- FIX: USE MEMORY STORAGE (No Disk Access) ---
+// --- IMPORT UNIFIED USER MODEL ---
+const User = require('./models/User');
+
 const upload = multer({ 
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 } 
 }); 
 
-// --- CORS ---
 app.use(cors({
     origin: "*", 
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -36,12 +38,11 @@ app.use(cors({
 
 const io = new Server(server, { cors: { origin: "*" } }); 
 
-// MIDDLEWARE
 app.use(express.json({ limit: '50mb' })); 
 app.use(express.static(__dirname)); 
 
 // DATABASE CONNECTION
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://sami_dbuser:SAMI!ame11@vbcs-project.7far1jp.mongodb.net/VBCS_DB?retryWrites=true&w=majority&appName=VBCS-Project";
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://amenuil19_db_user:<db_password>@vbcs-dev.wemupsg.mongodb.net/?appName=VBCS-Dev";
 
 mongoose.connect(MONGO_URI)
   .then(() => {
@@ -50,46 +51,8 @@ mongoose.connect(MONGO_URI)
   })
   .catch(err => console.error('❌ DB Error:', err.message));
 
-// ==========================================
-// SCHEMAS
-// ==========================================
 
-// A. USER
-const userSchema = new mongoose.Schema({
-    phoneNumber: { type: String, required: true, unique: true, index: true }, 
-    passwordHash: String,
-    salt: String,
-    role: { type: String, enum: ['subscriber', 'enterprise'], default: 'subscriber' }, 
-    companyName: String, 
-    fullName: String,
-    email: String,
-    profilePic: String, 
-    circle: [{ phone: String, name: String, status: { type: String, default: 'active' } }],
-    savedPlaces: [{ label: String, lat: Number, lng: Number, icon: String }],
-    status: { type: String, enum: ['Safe', 'Lost', 'SOS'], default: 'Safe' },
-    lostModeConfig: {
-        message: { type: String, default: "If found, please call 9449." },
-        audioAlertActive: { type: Boolean, default: false }
-    },
-    otp: String,
-    otpExpires: Date,
-    onboardingStep: { type: Number, default: 0 },
-    createdAt: { type: Date, default: Date.now },
-    location: { lat: Number, lng: Number, speed: Number, updatedAt: Date },
-    batteryLevel: { type: Number, default: 100 }
-});
-userSchema.methods.setPassword = function(password) {
-    this.salt = crypto.randomBytes(16).toString('hex');
-    this.passwordHash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
-};
-userSchema.methods.validatePassword = function(password) {
-    if (!this.passwordHash || !this.salt) return false;
-    const hash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
-    return this.passwordHash === hash;
-};
-const User = mongoose.models.User || mongoose.model('User', userSchema);
-
-// B. ADMIN
+// B. ADMIN SCHEMA (Kept inline as requested, but separated from User)
 const adminSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
     passwordHash: String,
@@ -106,21 +69,16 @@ adminSchema.methods.validatePassword = function(password) {
 };
 const Admin = mongoose.models.Admin || mongoose.model('Admin', adminSchema);
 
-// --- INIT ADMIN ---
 async function initAdmin() {
     try {
         const admin = await Admin.findOne({ username: 'admin' });
-        
-        // Case 1: No Admin -> Create it
         if (!admin) {
             const newAdmin = new Admin({ username: 'admin' });
             newAdmin.setPassword('admin123');
             await newAdmin.save();
             console.log("🔒 Default Admin Created");
         } 
-        // Case 2: Broken Admin (Missing Salt) -> Recreate it
         else if (!admin.salt || !admin.passwordHash) {
-            console.log("⚠️ Found corrupted Admin. Recreating...");
             await Admin.deleteOne({ username: 'admin' });
             const newAdmin = new Admin({ username: 'admin' });
             newAdmin.setPassword('admin123');
@@ -130,15 +88,11 @@ async function initAdmin() {
     } catch (e) { console.error("Admin Init Error:", e.message); }
 }
 
-// C. OTHERS
+// C. OTHER SCHEMAS
 const DirectoryEntry = mongoose.models.DirectoryEntry || mongoose.model('DirectoryEntry', new mongoose.Schema({
     companyName: String, phoneNumber: String, category: String, 
     email: String, officeAddress: String, isVerified: { type: Boolean, default: true },
     status: { type: String, default: 'Active' }
-}));
-
-const Category = mongoose.models.Category || mongoose.model('Category', new mongoose.Schema({
-    name: { type: String, unique: true }
 }));
 
 const SpamReport = mongoose.models.SpamReport || mongoose.model('SpamReport', new mongoose.Schema({
@@ -152,6 +106,50 @@ const SuspiciousNumber = mongoose.models.SuspiciousNumber || mongoose.model('Sus
 const Notification = mongoose.models.Notification || mongoose.model('Notification', new mongoose.Schema({
     title: String, body: String, date: { type: Date, default: Date.now }
 }));
+
+// ==========================================
+// NEW FLUTTER API ROUTES (V13)
+// ==========================================
+
+app.post('/api/auth/register', async (req, res) => {
+    try {
+        const { phone, pin, email } = req.body;
+        
+        let user = await User.findOne({ phoneNumber: phone });
+        if (user) return res.status(400).json({ message: 'Phone number is already registered.' });
+
+        user = new User({ phoneNumber: phone, email: email });
+        user.setPassword(pin); // Hashes the PIN securely
+        await user.save();
+
+        res.status(201).json({ message: 'Device registered successfully.' });
+    } catch (error) {
+        console.error('Registration Error:', error);
+        res.status(500).json({ message: 'Server error during registration.' });
+    }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { phone, pin } = req.body;
+
+        const user = await User.findOne({ phoneNumber: phone });
+        if (!user || !user.validatePassword(pin)) {
+            return res.status(400).json({ message: 'Invalid phone number or PIN.' });
+        }
+
+        const token = jwt.sign(
+            { userId: user._id, phone: user.phoneNumber }, 
+            process.env.JWT_SECRET || 'tele_guardian_super_secret_key', 
+            { expiresIn: '30d' }
+        );
+
+        res.status(200).json({ token, message: 'Login successful' });
+    } catch (error) {
+        console.error('Login Error:', error);
+        res.status(500).json({ message: 'Server error during login.' });
+    }
+});
 
 // ==========================================
 // REAL-TIME ENGINE
@@ -212,7 +210,7 @@ app.post('/api/v9/auth/otp-verify', async (req, res) => {
         if (user.onboardingStep < 2 && !user.fullName) nextStep = 'wizard'; 
         await user.save();
         const userLite = user.toObject();
-        delete userLite.profilePic; 
+        delete userLite.passwordHash; delete userLite.salt; // Security fix
         res.json({ success: true, nextStep, user: userLite });
     } catch (err) { res.status(500).json({ success: false }); }
 });
@@ -225,7 +223,7 @@ app.post('/api/v9/auth/login', async (req, res) => {
         const isValid = await user.validatePassword(password);
         if (!isValid) return res.status(400).json({ success: false, message: "Invalid Password" });
         const userLite = user.toObject();
-        delete userLite.profilePic; 
+        delete userLite.passwordHash; delete userLite.salt;
         res.json({ success: true, user: userLite });
     } catch (err) { res.status(500).json({ success: false }); }
 });
@@ -266,7 +264,6 @@ app.get('/api/v9/guardian/circle', async (req, res) => {
 });
 
 // --- CORE ROUTES (v12) ---
-// 1. CALLER ID LOOKUP
 app.get('/api/v12/lookup/:number', async (req, res) => {
     const num = req.params.number;
     const verified = await DirectoryEntry.findOne({ phoneNumber: num });
@@ -292,17 +289,13 @@ app.post('/api/v12/report', async (req, res) => {
     } catch(err) { res.status(500).json({ success: false }); }
 });
 
-// 2. CATEGORY LIST (Screen 1: The Buttons)
 app.get('/api/v12/categories', async (req, res) => {
     try {
-        // Group by Category and Count
         const stats = await DirectoryEntry.aggregate([
             { $group: { _id: "$category", count: { $sum: 1 } } },
             { $sort: { _id: 1 } } 
         ]);
-        
         const result = stats.map(s => ({ name: s._id || "Other", count: s.count }));
-        
         if(result.length === 0) return res.json([{name: "Directory Empty", count: 0}]);
         res.json(result);
     } catch (e) {
@@ -310,7 +303,6 @@ app.get('/api/v12/categories', async (req, res) => {
     }
 });
 
-// 3. CATEGORY LISTING (Screen 2: The List)
 app.get('/api/v12/directory/category/:name', async (req, res) => {
     try {
         const catName = req.params.name;
@@ -321,7 +313,6 @@ app.get('/api/v12/directory/category/:name', async (req, res) => {
     } catch (e) { res.json([]); }
 });
 
-// 4. GENERAL SEARCH
 app.get('/api/v12/directory/search', async (req, res) => {
     try {
         const { q } = req.query;
@@ -398,7 +389,6 @@ ownerRouter.get('/directory', async (req, res) => {
     res.json(list);
 });
 
-// --- CSV UPLOAD (AUTO-CLEAN CATEGORIES) ---
 ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
     if(!req.file) return res.status(400).json({ message: "No file found" });
     
@@ -421,7 +411,6 @@ ownerRouter.post('/directory-upload', upload.single('file'), (req, res) => {
             const phone = findVal(['phone', 'mobile', 'number']);
             let cat = findVal(['category', 'type', 'industry']) || 'Other';
 
-            // Auto-Clean Category: "bank " -> "Bank"
             cat = cat.trim();
             cat = cat.charAt(0).toUpperCase() + cat.slice(1).toLowerCase();
 
@@ -496,10 +485,9 @@ app.get('/admin', (req, res) => {
     }
 });
 
-// Catch-All for unknown routes
 app.get('*', (req, res) => {
     res.status(404).send("<h1>404 Not Found</h1>");
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.33 Server Running on Port ${PORT}`); });
+server.listen(PORT, () => { console.log(`🚀 V12.34 Server Running on Port ${PORT}`); });
