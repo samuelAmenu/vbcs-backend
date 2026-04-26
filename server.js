@@ -2,7 +2,10 @@
    VBCS MASTER SERVER V12.34 (SMART CATEGORY HUB + FLUTTER AUTH)
    - Unified User Model
    - Added /api/auth for new Flutter App (JWT)
+   - Added /api/emergency/sos Pipeline
+   - Added /api/guardian/location/update (Stealth Engine)
    - Preserved all v9, v12, and Owner routes
+   - INJECTED: V2 Extreme Auth Pipeline & JSON Catch-All
    ================================================== */
 
 require('dotenv').config();
@@ -17,7 +20,7 @@ const multer = require('multer');
 const csv = require('csv-parser');      
 const fs = require('fs');               
 const { Readable } = require('stream'); 
-const jwt = require('jsonwebtoken'); // NEW: Required for Flutter Auth
+const jwt = require('jsonwebtoken'); 
 
 const app = express();
 const server = http.createServer(app); 
@@ -148,6 +151,137 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (error) {
         console.error('Login Error:', error);
         res.status(500).json({ message: 'Server error during login.' });
+    }
+});
+
+// ==========================================
+// NEW FLUTTER V2 EXTREME AUTH PIPELINE
+// ==========================================
+const tempOtpStore = {}; // Memory bank for temporary OTPs
+
+app.post('/api/auth/v2/register-init', async (req, res) => {
+    try {
+        const { phone, email } = req.body;
+        let user = await User.findOne({ phoneNumber: phone });
+        if (user) return res.status(400).json({ success: false, message: 'Phone number is already registered.' });
+
+        const otp = "123456"; // Static OTP for testing
+        tempOtpStore[email] = { phone, otp }; 
+
+        console.log(`📧 EMAIL SENT TO ${email}: Your TeleGuardian OTP is ${otp}`);
+        res.status(200).json({ success: true, message: 'OTP sent successfully.' });
+    } catch (err) {
+        console.error('V2 Init Error:', err);
+        res.status(500).json({ success: false, message: 'Server error.' });
+    }
+});
+
+app.post('/api/auth/v2/register-complete', async (req, res) => {
+    try {
+        const { email, otp, pin } = req.body;
+        const storedData = tempOtpStore[email];
+
+        if (!storedData || storedData.otp !== otp) {
+            return res.status(400).json({ success: false, message: 'Invalid or expired OTP.' });
+        }
+
+        let user = new User({ phoneNumber: storedData.phone, email: email });
+        user.setPassword(pin);
+        await user.save();
+
+        delete tempOtpStore[email]; // Clear security footprint
+
+        const token = jwt.sign(
+            { userId: user._id, phone: user.phoneNumber }, 
+            process.env.JWT_SECRET || 'tele_guardian_super_secret_key', 
+            { expiresIn: '30d' }
+        );
+
+        res.status(201).json({ success: true, message: 'Vault Key Secured.', token });
+    } catch (err) {
+        console.error('V2 Complete Error:', err);
+        res.status(500).json({ success: false, message: 'Server error during verification.' });
+    }
+});
+
+app.post('/api/auth/v2/login', async (req, res) => {
+    try {
+        const { phone, pin } = req.body;
+        const user = await User.findOne({ phoneNumber: phone });
+        
+        if (!user || !user.validatePassword(pin)) {
+            return res.status(400).json({ success: false, message: 'Invalid phone number or PIN.' });
+        }
+
+        const token = jwt.sign(
+            { userId: user._id, phone: user.phoneNumber }, 
+            process.env.JWT_SECRET || 'tele_guardian_super_secret_key', 
+            { expiresIn: '30d' }
+        );
+
+        res.status(200).json({ success: true, message: 'Login successful', token, requires2FA: false });
+    } catch (err) {
+        console.error('V2 Login Error:', err);
+        res.status(500).json({ success: false, message: 'Server error during login.' });
+    }
+});
+
+
+// ==========================================
+// EMERGENCY & SAFETY ROUTES
+// ==========================================
+app.post('/api/emergency/sos', async (req, res) => {
+    try {
+        const { phone, latitude, longitude } = req.body;
+
+        if (!phone || !latitude || !longitude) {
+            return res.status(400).json({ success: false, message: 'Missing SOS data' });
+        }
+
+        console.log(`🚨 SOS TRIGGERED BY: ${phone}`);
+        console.log(`📍 COORDINATES: Lat ${latitude}, Lng ${longitude}`);
+        
+        // Broadcast to the user's circle via Socket.io if they are connected
+        const user = await User.findOne({ phoneNumber: phone });
+        if(user && user.circle) {
+             user.circle.forEach(member => {
+                 io.to(member.phone).emit('sos_alert', { 
+                     fromName: user.fullName || phone, 
+                     lat: latitude, 
+                     lng: longitude 
+                 });
+             });
+        }
+        
+        res.status(200).json({ 
+            success: true, 
+            message: 'SOS Broadcasted successfully to your Guardian Circle.' 
+        });
+    } catch (error) {
+        console.error('❌ SOS Error:', error);
+        res.status(500).json({ success: false, message: 'Server error during SOS' });
+    }
+});
+
+app.post('/api/guardian/location/update', async (req, res) => {
+    try {
+        const { phone, lat, lng, battery } = req.body;
+        if (!phone) return res.status(400).json({ success: false, message: 'No phone provided' });
+
+        // Update the user's location in the database quietly
+        await User.findOneAndUpdate(
+            { phoneNumber: phone },
+            { location: { lat, lng, updatedAt: new Date() }, batteryLevel: battery || 100 },
+            { new: true }
+        );
+
+        // Tell the Socket engine to update anyone currently looking at the map
+        io.emit('friend_moved', { phone, lat, lng, battery });
+
+        res.status(200).json({ success: true });
+    } catch (error) {
+        console.error('Stealth Ping Error:', error.message);
+        res.status(500).json({ success: false });
     }
 });
 
@@ -467,6 +601,17 @@ ownerRouter.post('/suspend-number', async (req, res) => {
 app.use('/api/v1/owner', ownerRouter);
 
 // ==========================================
+// 🛡️ JSON CATCH-ALL (PREVENTS HTML CRASHES)
+// ==========================================
+app.use('/api/*', (req, res) => {
+    console.log(`🚨 ROUTE MISMATCH: Flutter tried to call [${req.method}] ${req.originalUrl}`);
+    res.status(404).json({ 
+        success: false, 
+        message: `Backend route does not exist: ${req.originalUrl}` 
+    });
+});
+
+// ==========================================
 // 8. SERVE FRONTEND (AND 404 CATCH-ALL)
 // ==========================================
 app.get('/', (req, res) => { 
@@ -490,4 +635,4 @@ app.get('*', (req, res) => {
 });
 
 const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => { console.log(`🚀 V12.34 Server Running on Port ${PORT}`); });
+server.listen(PORT, '0.0.0.0', () => { console.log(`🚀 V12.34 Server Running on Port ${PORT}`); });

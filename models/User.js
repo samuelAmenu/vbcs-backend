@@ -6,11 +6,17 @@ const userSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true, unique: true, index: true },
     email: { type: String },
     
-    // --- Security ---
+    // --- Extreme Security (Phase 4) ---
     passwordHash: String,
     salt: String,
-    otp: String,
-    otpExpires: Date,
+    otp: String,              // Legacy OTP
+    otpExpires: Date,         // Legacy OTP Expiry
+    registrationOtp: String,  // NEW: Secure Email verification code
+    isEmailVerified: { type: Boolean, default: false },  // NEW: Email lock
+    twoFactorEnabled: { type: Boolean, default: false }, // NEW: TOTP active flag
+    twoFactorSecret: String,  // NEW: Google Authenticator Vault Key
+    termsAcceptedAt: Date,    // NEW: Legal Compliance Audit
+    privacyAcceptedAt: Date,  // NEW: Legal Compliance Audit
     
     // --- Roles & Profile ---
     role: { type: String, enum: ['subscriber', 'enterprise', 'admin'], default: 'subscriber' },
@@ -38,7 +44,7 @@ const userSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-// --- Security Methods (Used by both legacy and new routes) ---
+// --- Security Methods ---
 userSchema.methods.setPassword = function(password) {
     this.salt = crypto.randomBytes(16).toString('hex');
     this.passwordHash = crypto.pbkdf2Sync(password, this.salt, 1000, 64, 'sha512').toString('hex');
